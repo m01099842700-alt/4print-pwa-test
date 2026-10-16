@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#16324f">
+  <meta name="description" content="منصة 4Print لحجز خامات مكتبة كلية الفنون الجميلة">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/icon.svg">
+  <link rel="stylesheet" href="./style.css">
+  <title>4Print | حجز الخامات</title>
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><div class="logo">4P</div><div><h1>4Print</h1><p>منصة حجز الخامات</p></div></div>
+    <button id="installBtn" class="install hidden" type="button">تثبيت التطبيق</button>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <span class="eyebrow">مكتبة كلية الفنون الجميلة</span>
+      <h2>احجز خاماتك بسهولة</h2>
+      <p>واجهة هاتف بسيطة لحجز الخامات ومتابعة الطلب. هذه نسخة اختبار للواجهة والتثبيت؛ لم تُربط بعد بقاعدة البيانات.</p>
+      <div class="notice" role="status" id="connectionNotice">
+        <strong>نسخة اختبار</strong>
+        <span>لن يتم تسجيل أي طلب أو سداد من هذه الصفحة حتى إتمام ربطها الآمن بنظام Google Sheets.</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="tile">
+        <div class="tile-icon">🧾</div>
+        <h3>حجز الخامات</h3>
+        <p>سيظهر هنا كتالوج الخامات والكميات والأسعار بعد ربط النظام الحالي.</p>
+        <button class="primary" id="bookingInfo" type="button">حالة الحجز</button>
+      </article>
+      <article class="tile">
+        <div class="tile-icon">💳</div>
+        <h3>السداد وإيصال التحويل</h3>
+        <p>سيتم ربط رفع إيصالات JPG وPNG وPDF ومراجعة حالة السداد بالنظام الحالي.</p>
+        <button class="secondary" id="paymentInfo" type="button">قواعد السداد</button>
+      </article>
+      <article class="tile">
+        <div class="tile-icon">📦</div>
+        <h3>متابعة الطلب</h3>
+        <p>ستبقى بيانات الطلبات والمدفوعات والمخزون في Google Sheets الحالي.</p>
+        <button class="secondary" id="dataInfo" type="button">حماية البيانات</button>
+      </article>
+    </section>
+
+    <section class="card">
+      <h3>اختبار التطبيق</h3>
+      <p id="testStatus">جارٍ فحص دعم Service Worker…</p>
+      <ul>
+        <li>افتح هذه الصفحة من رابط GitHub Pages بعد تفعيل HTTPS.</li>
+        <li>جرّب «تثبيت التطبيق» على أندرويد من المتصفح، أو «إضافة إلى الشاشة الرئيسية» على آيفون.</li>
+        <li>اختبار العمل دون اتصال يخص ملفات الواجهة فقط، وليس الحجز أو السداد.</li>
+      </ul>
+    </section>
+    <footer>4Print · نسخة تجريبية لا تتصل ببيانات الطلاب</footer>
+  </main>
+  <script src="./app.js" defer></script>
+</body>
+</html>
