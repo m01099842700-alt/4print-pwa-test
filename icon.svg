@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#16324f"/>
+  <rect x="36" y="36" width="440" height="440" rx="88" fill="#245b84"/>
+  <path d="M104 110h304v28H104z" fill="#c49a3a"/>
+  <text x="256" y="305" font-family="Arial,sans-serif" font-size="154" font-weight="800" text-anchor="middle" fill="#fff">4P</text>
+  <text x="256" y="365" font-family="Arial,sans-serif" font-size="32" font-weight="700" text-anchor="middle" fill="#f4d78c">4PRINT</text>
+</svg>
