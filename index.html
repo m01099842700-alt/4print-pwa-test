@@ -43,12 +43,56 @@
       <div id="productsList"></div>
     </section>
 
-    <section class="card">
-      <h2>ملخص الاختيار</h2>
-      <p>عدد الأصناف المختارة: <strong id="selectedCount">0</strong></p>
-      <p>الإجمالي المبدئي: <strong id="orderTotal">0</strong> جنيه</p>
-      <p>هذا ملخص مبدئي فقط، ولم يتم تسجيل طلب أو حجز أي كمية.</p>
-    </section>
+   
+<section class="card" id="bookingSection">
+  <h2>بيانات حجز الخامات</h2>
+
+  <p>عدد الأصناف المختارة:
+    <strong id="selectedCount">0</strong>
+  </p>
+
+  <p>الإجمالي المبدئي:
+    <strong id="orderTotal">0</strong> جنيه
+  </p>
+
+  <p class="notice">
+    لن يتم تسجيل الحجز إلا بعد إرسال الطلب بنجاح إلى النظام.
+  </p>
+
+  <form id="bookingForm">
+    <label for="studentName">الاسم الرباعي</label>
+    <input
+      id="studentName"
+      name="name"
+      type="text"
+      autocomplete="name"
+      placeholder="اكتب الاسم الرباعي"
+      required
+      minlength="8"
+    >
+
+    <label for="studentPhone">رقم الهاتف المحمول</label>
+    <input
+      id="studentPhone"
+      name="phone"
+      type="tel"
+      inputmode="numeric"
+      autocomplete="tel"
+      placeholder="01xxxxxxxxx"
+      pattern="01[0125][0-9]{8}"
+      required
+    >
+
+    <button id="submitOrderBtn" type="submit" disabled>
+      إرسال طلب الحجز
+    </button>
+
+    <p id="bookingStatus" role="status">
+      جارٍ تجهيز نموذج الحجز...
+    </p>
+  </form>
+</section>
+
 
     <section class="grid">
       <article class="tile">
