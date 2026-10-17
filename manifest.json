@@ -3,7 +3,7 @@
   "id": "./",
   "name": "4Print - حجز الخامات",
   "short_name": "4Print",
-  "description": "منصة حجز خامات مكتبة كلية الفنون الجميلة",
+  "description": "منصة 4Print لحجز الخامات",
   "lang": "ar",
   "dir": "rtl",
   "start_url": "./index.html",
