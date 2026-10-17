@@ -29,6 +29,96 @@ const dataInfo = document.getElementById("dataInfo");
 let products = [];
 const quantities = Object.create(null);
 
+const PENDING_ORDER_KEY = "4print_pending_order_v1";
+
+function getPendingOrder() {
+  try {
+    const raw = localStorage.getItem(PENDING_ORDER_KEY);
+    if (!raw) return null;
+
+    const pending = JSON.parse(raw);
+
+    if (
+      !pending ||
+      typeof pending.idempotencyKey !== "string" ||
+      !pending.payload ||
+      !Array.isArray(pending.payload.items)
+    ) {
+      throw new Error("بيانات الحجز المحفوظة غير مكتملة.");
+    }
+
+    return pending;
+  } catch (error) {
+    console.error("تعذر قراءة الحجز المحفوظ:", error);
+    return null;
+  }
+}
+
+function createIdempotencyKey() {
+  if (
+    window.crypto &&
+    typeof window.crypto.randomUUID === "function"
+  ) {
+    return window.crypto.randomUUID().replace(/-/g, "");
+  }
+
+  if (window.crypto && window.crypto.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+
+    return Array.from(bytes)
+      .map(byte => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  throw new Error(
+    "تعذر إنشاء مفتاح آمن للحجز. افتح التطبيق عبر رابط HTTPS."
+  );
+}
+
+function savePendingOrder(pending) {
+  // يجب حفظ الطلب قبل إرساله إلى الخادم.
+  // إذا فشل الحفظ، لا نرسل الطلب.
+  localStorage.setItem(
+    PENDING_ORDER_KEY,
+    JSON.stringify(pending)
+  );
+}
+
+function clearPendingOrder(idempotencyKey) {
+  const pending = getPendingOrder();
+
+  // لا نحذف إلا المحاولة التي تأكد نجاحها.
+  if (
+    pending &&
+    pending.idempotencyKey === idempotencyKey
+  ) {
+    localStorage.removeItem(PENDING_ORDER_KEY);
+  }
+}
+
+function restorePendingOrder() {
+  const pending = getPendingOrder();
+  if (!pending) return false;
+
+  const payload = pending.payload;
+
+  const nameInput = document.getElementById("studentName");
+  const phoneInput = document.getElementById("studentPhone");
+
+  if (nameInput) nameInput.value = payload.name || "";
+  if (phoneInput) phoneInput.value = payload.phone || "";
+
+  Object.keys(quantities).forEach(code => {
+    quantities[code] = 0;
+  });
+
+  payload.items.forEach(item => {
+    quantities[item.code] = Number(item.quantity) || 0;
+  });
+
+  return true;
+}
 // ========================================
 // تنسيق الأسعار
 // ========================================
@@ -264,89 +354,65 @@ async function loadProducts() {
       );
     }
 
-    products = data.products;
+products = data.products;
 
-    window.fourPrintProducts = products;
+const hasPendingOrder = restorePendingOrder();
 
-    renderProducts();
-    updateSummary();
-    setBookingReady();
+window.fourPrintProducts = products;
 
-    if (connectionNotice) {
-      connectionNotice.textContent =
-        "تم الاتصال بالنظام بنجاح وتحميل " +
-        products.length + " خامة.";
-    }
+renderProducts();
+updateSummary();
+setBookingReady();
 
-    if (testStatus) {
-      testStatus.textContent =
-        "نجح الاتصال بالنظام. عدد الخامات المحمّلة: " +
-        products.length;
-    }
-
-  } catch (error) {
-    if (productsStatus) {
-      productsStatus.textContent =
-        "تعذر تحميل الخامات: " + error.message;
-    }
-
-    if (connectionNotice) {
-      connectionNotice.textContent =
-        "تعذر الاتصال بنظام الخامات. حدّث الصفحة وحاول مرة أخرى.";
-    }
-
-    if (testStatus) {
-      testStatus.textContent =
-        "فشل تحميل الخامات: " + error.message;
-    }
-
-    setBookingUnavailable(
-      "تعذر تجهيز الحجز. تحقق من الاتصال ثم حدّث الصفحة."
-    );
-
-    console.error(
-      "خطأ تحميل خامات 4Print:",
-      error
-    );
-  }
+if (hasPendingOrder && bookingStatus) {
+  bookingStatus.textContent =
+    "يوجد حجز سابق لم تُحسم نتيجته بعد. عند الإرسال مجددًا سيُعاد إرسال الحجز المحفوظ نفسه، ولن تُرسل بيانات حجز جديد.";
 }
-
 // ========================================
 // إرسال طلب الحجز
 // ========================================
 
 if (bookingForm) {
-  bookingForm.addEventListener(
-    "submit",
-    async function (event) {
-      event.preventDefault();
+  bookingForm.addEventListener("submit", async function(event) {
+    event.preventDefault();
 
-      // منع الإرسال المتكرر
-      if (isSubmitting) return;
+    if (isSubmitting) return;
 
-      if (!products.length) {
-        setBookingUnavailable(
-          "الخامات غير محمّلة. حدّث الصفحة وحاول مرة أخرى."
-        );
-        return;
-      }
+    if (!products.length) {
+      setBookingUnavailable(
+        "الخامات غير محمّلة. حدّث الصفحة وحاول مرة أخرى."
+      );
+      return;
+    }
 
-      if (!bookingForm.reportValidity()) {
-        return;
-      }
+    let pending = getPendingOrder();
+    let payload;
+
+    // إذا كانت هناك محاولة سابقة غير محسومة،
+    // نعيد إرسال بياناتها ومفتاحها نفسيهما.
+    if (pending) {
+      const retry = confirm(
+        "توجد محاولة حجز سابقة لم تُحسم نتيجتها.\n\n" +
+        "سيعيد النظام إرسال الحجز السابق نفسه، " +
+        "ولن يرسل الاختيارات الحالية كحجز جديد.\n\n" +
+        "هل تريد إعادة المحاولة؟"
+      );
+
+      if (!retry) return;
+
+      payload = pending.payload;
+
+    } else {
+      if (!bookingForm.reportValidity()) return;
 
       const name =
-        document.getElementById("studentName")
-          ?.value.trim() || "";
+        document.getElementById("studentName")?.value.trim() || "";
 
       const phone =
-        document.getElementById("studentPhone")
-          ?.value.trim() || "";
+        document.getElementById("studentPhone")?.value.trim() || "";
 
       const items = products
-        .filter(product =>
-          (quantities[product.code] || 0) > 0
-        )
+        .filter(product => (quantities[product.code] || 0) > 0)
         .map(product => ({
           code: product.code,
           quantity: quantities[product.code]
@@ -368,98 +434,127 @@ if (bookingForm) {
         return;
       }
 
-      if (
-        !confirm(
-          "هل تريد إرسال طلب الحجز؟ تأكد من الاسم والخامات والكميات قبل المتابعة."
-        )
-      ) {
+      if (!confirm(
+        "هل تريد إرسال طلب الحجز؟ تأكد من الاسم والخامات والكميات قبل المتابعة."
+      )) {
         return;
       }
 
-      isSubmitting = true;
+      const idempotencyKey = createIdempotencyKey();
 
-      if (submitOrderBtn) {
-        submitOrderBtn.disabled = true;
-        submitOrderBtn.textContent =
-          "جارٍ إرسال الطلب...";
+      payload = {
+        name: name,
+        phone: phone,
+        items: items,
+        idempotencyKey: idempotencyKey
+      };
+
+      pending = {
+        idempotencyKey: idempotencyKey,
+        payload: payload
+      };
+
+      try {
+        // لا نرسل الطلب قبل حفظه محليًا.
+        savePendingOrder(pending);
+      } catch (error) {
+        console.error("تعذر حفظ الحجز محليًا:", error);
+
+        if (bookingStatus) {
+          bookingStatus.textContent =
+            "تعذر حفظ بيانات الحجز بأمان على هذا الجهاز؛ " +
+            "لم يتم إرسال الطلب. تحقق من إعدادات المتصفح ومساحة التخزين.";
+        }
+        return;
       }
+    }
+
+    isSubmitting = true;
+
+    if (submitOrderBtn) {
+      submitOrderBtn.disabled = true;
+      submitOrderBtn.textContent = "جارٍ إرسال الطلب...";
+    }
+
+    if (bookingStatus) {
+      bookingStatus.textContent =
+        "جارٍ إرسال الحجز والتحقق من نتيجته. يرجى الانتظار.";
+    }
+
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json();
+
+      if (
+        !response.ok ||
+        !result ||
+        result.success !== true
+      ) {
+        throw new Error(
+          result?.error ||
+          result?.message ||
+          "لم يؤكد النظام تسجيل الطلب."
+        );
+      }
+
+      // وصل تأكيد نجاح من الخادم؛ يمكن إزالة المحاولة المحفوظة.
+      clearPendingOrder(pending.idempotencyKey);
 
       if (bookingStatus) {
         bookingStatus.textContent =
-          "جارٍ إرسال طلب الحجز. يرجى الانتظار وعدم تحديث الصفحة.";
+          "تم تأكيد الحجز بنجاح. رقم الطلب: " +
+          result.orderId +
+          " — الإجمالي: " +
+          formatMoney(result.total) +
+          " جنيه." +
+          (result.duplicate
+            ? " تم العثور على الحجز السابق ولم يُنشأ حجز مكرر."
+            : " احتفظ برقم الطلب.");
       }
 
-      try {
-        const response = await fetch(API_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            name: name,
-            phone: phone,
-            items: items
-          })
-        });
+      bookingForm.reset();
 
-        const result = await response.json();
+      Object.keys(quantities).forEach(code => {
+        quantities[code] = 0;
+      });
 
-        if (
-          !response.ok ||
-          !result ||
-          result.success !== true
-        ) {
-          throw new Error(
-            result?.error ||
-            "لم يؤكد النظام تسجيل الطلب."
-          );
-        }
+      renderProducts();
+      updateSummary();
 
-        if (bookingStatus) {
-          bookingStatus.textContent =
-            "تم تسجيل الحجز بنجاح. رقم الطلب: " +
-            result.orderId +
-            " — الإجمالي: " +
-            formatMoney(result.total) +
-            " جنيه. احتفظ برقم الطلب.";
-        }
+      // تحديث المخزون من الخادم بعد نجاح الحجز.
+      await loadProducts();
 
-        bookingForm.reset();
+    } catch (error) {
+      console.error("نتيجة إرسال طلب 4Print:", error);
 
-        Object.keys(quantities).forEach(code => {
-          quantities[code] = 0;
-        });
+      if (bookingStatus) {
+        bookingStatus.textContent =
+          "لم نتمكن من التأكد من نتيجة الحجز. " +
+          "احتفظ بالصفحة ولا تحذف بيانات المتصفح. " +
+          "يمكنك إعادة المحاولة لإرسال الطلب المحفوظ نفسه. " +
+          "التفاصيل: " + error.message;
+      }
 
-        // تحديث المخزون من الخادم بعد نجاح الحجز
-        await loadProducts();
+      // لا نحذف المفتاح هنا؛ فقد يكون الخادم سجل الطلب بالفعل.
 
-      } catch (error) {
-        console.error(
-          "نتيجة إرسال طلب 4Print:",
-          error
-        );
+    } finally {
+      isSubmitting = false;
 
-        if (bookingStatus) {
-          bookingStatus.textContent =
-            "تعذر التأكد من نتيجة الإرسال: " +
-            error.message +
-            ". لا تعاود الإرسال قبل مراجعة سجل الطلبات.";
-        }
-
-      } finally {
-        isSubmitting = false;
-
-        if (submitOrderBtn) {
-          submitOrderBtn.textContent =
-            "إرسال طلب الحجز";
-
-          submitOrderBtn.disabled =
-            products.length === 0;
-        }
+      if (submitOrderBtn) {
+        submitOrderBtn.textContent = "إرسال طلب الحجز";
+        submitOrderBtn.disabled = products.length === 0;
       }
     }
-  );
+  });
 }
+
 
 // ========================================
 // تثبيت التطبيق على الجهاز
