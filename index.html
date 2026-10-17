@@ -6,15 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#16324f">
   <meta name="description" content="منصة 4Print لحجز خامات مكتبة كلية الفنون الجميلة">
-
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./icons/icon.svg">
   <link rel="stylesheet" href="./style.css">
-
   <title>4Print | حجز الخامات</title>
 </head>
-
 <body>
   <header class="top">
     <div class="brand">
@@ -24,110 +21,61 @@
         <p>منصة حجز الخامات</p>
       </div>
     </div>
-
     <button id="installBtn" class="install hidden" type="button">
       تثبيت التطبيق
     </button>
   </header>
 
   <main class="wrap">
-
     <section class="hero">
       <span class="eyebrow">مكتبة كلية الفنون الجميلة</span>
-
       <h2>احجز خاماتك بسهولة</h2>
-
-      <p>
-        منصة 4Print لحجز الخامات ومتابعة السداد والاستلام
-        من مكتبة كلية الفنون الجميلة.
-      </p>
-
-      <div class="notice" role="status" id="connectionNotice">
+      <p>تعرّف على الخامات والأسعار والكميات المتاحة من خلال منصة 4Print.</p>
+      <div class="notice" id="connectionNotice" role="status">
         <strong>منصة 4Print</strong>
-        <span>
-          اضغط على الزر التالي لفتح صفحة الحجز الحالية.
-        </span>
-      </div>
-
-      <div class="booking-action">
-        <a
-          class="primary"
-          id="bookingLink"
-          href="https://script.google.com/macros/s/AKfycbyHk9JNDDT3sQR6lcNrV42rhaFmiyfZlGA1PCc-xWz1ZR7oLt-WlT9TK8wOESe8ZBM/exec"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          🧾 حجز الخامات
-        </a>
+        <span>جارٍ الاتصال بنظام الخامات...</span>
       </div>
     </section>
 
+    <section class="card" id="materialsSection">
+      <h2>الخامات المتاحة</h2>
+      <p id="productsStatus" role="status">جارٍ تحميل الخامات...</p>
+      <div id="productsList"></div>
+    </section>
+
+    <section class="card">
+      <h2>ملخص الاختيار</h2>
+      <p>عدد الأصناف المختارة: <strong id="selectedCount">0</strong></p>
+      <p>الإجمالي المبدئي: <strong id="orderTotal">0</strong> جنيه</p>
+      <p>هذا ملخص مبدئي فقط، ولم يتم تسجيل طلب أو حجز أي كمية.</p>
+    </section>
+
     <section class="grid">
-
-      <article class="tile">
-        <div class="tile-icon">🧾</div>
-        <h3>حجز الخامات</h3>
-        <p>
-          افتح صفحة الحجز للاطلاع على الأصناف والأسعار
-          وتسجيل طلبك.
-        </p>
-
-        <a
-          class="primary"
-          href="https://script.google.com/macros/s/AKfycbyHk9JNDDT3sQR6lcNrV42rhaFmiyfZlGA1PCc-xWz1ZR7oLt-WlT9TK8wOESe8ZBM/exec"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          فتح صفحة الحجز
-        </a>
-      </article>
-
       <article class="tile">
         <div class="tile-icon">💳</div>
         <h3>السداد وإيصال التحويل</h3>
-        <p>
-          تُرسل إثباتات التحويل من خلال صفحة الحجز الحالية،
-          وتخضع لمراجعة أمين المكتبة.
-        </p>
-
-        <button class="secondary" id="paymentInfo" type="button">
-          قواعد السداد
-        </button>
+        <p>سيظل اعتماد السداد وفق الإجراءات الحالية لأمين المكتبة.</p>
+        <button class="secondary" id="paymentInfo" type="button">قواعد السداد</button>
       </article>
-
       <article class="tile">
         <div class="tile-icon">📦</div>
-        <h3>متابعة الطلب</h3>
-        <p>
-          تبقى بيانات الطلبات والمدفوعات وحركة المخزون
-          في ملف Google Sheets الحالي.
-        </p>
-
-        <button class="secondary" id="dataInfo" type="button">
-          حماية البيانات
-        </button>
+        <h3>حماية البيانات</h3>
+        <p>تبقى بيانات الطلبات والمدفوعات وحركة المخزون في ملف Google Sheets الحالي.</p>
+        <button class="secondary" id="dataInfo" type="button">معلومات البيانات</button>
       </article>
-
     </section>
 
     <section class="card">
       <h3>حالة التطبيق</h3>
-
-      <p id="testStatus">
-        جارٍ فحص دعم تثبيت التطبيق…
-      </p>
-
+      <p id="testStatus">جارٍ فحص دعم تثبيت التطبيق...</p>
       <ul>
-        <li>يُفتح التطبيق من رابط GitHub Pages باستخدام HTTPS.</li>
-        <li>يمكن تثبيته على أندرويد أو إضافته إلى الشاشة الرئيسية.</li>
-        <li>تخزين الواجهة دون اتصال لا يعني أن الحجز والسداد يعملان دون إنترنت.</li>
+        <li>يعمل التطبيق من خلال HTTPS.</li>
+        <li>يمكن تثبيته على الهاتف عند دعم المتصفح لذلك.</li>
+        <li>الحجز يحتاج إلى اتصال بالإنترنت.</li>
       </ul>
     </section>
 
-    <footer>
-      4Print · منصة حجز خامات مكتبة كلية الفنون الجميلة
-    </footer>
-
+    <footer>4Print · منصة حجز خامات مكتبة كلية الفنون الجميلة</footer>
   </main>
 
   <script src="./app.js" defer></script>
