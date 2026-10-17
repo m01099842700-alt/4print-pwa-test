@@ -1,5 +1,5 @@
 
-const CACHE_NAME = "4print-shell-v2";
+const CACHE_NAME = "4print-shell-v3";
 
 const APP_SHELL = [
   "./",
