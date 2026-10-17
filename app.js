@@ -1,21 +1,183 @@
 
 let installPrompt = null;
 
-const installBtn = document.getElementById("installBtn");
-const testStatus = document.getElementById("testStatus");
-
-// عنوان وسيط الاتصال الذي اختبرناه بنجاح
 const API_URL = "https://4print-api.m01099842700.workers.dev/";
 
-// تسجيل Service Worker
+const installBtn = document.getElementById("installBtn");
+const testStatus = document.getElementById("testStatus");
+const productsStatus = document.getElementById("productsStatus");
+const productsList = document.getElementById("productsList");
+const connectionNotice = document.getElementById("connectionNotice");
+const selectedCount = document.getElementById("selectedCount");
+const orderTotal = document.getElementById("orderTotal");
+
+let products = [];
+const quantities = Object.create(null);
+
+function formatMoney(value) {
+  return Number(value).toLocaleString("ar-EG", {
+    maximumFractionDigits: 2
+  });
+}
+
+function updateSummary() {
+  let count = 0;
+  let total = 0;
+
+  products.forEach(product => {
+    const quantity = quantities[product.code] || 0;
+    if (quantity > 0) {
+      count++;
+      total += quantity * Number(product.price || 0);
+    }
+  });
+
+  selectedCount.textContent = count;
+  orderTotal.textContent = formatMoney(total);
+}
+
+function renderProducts() {
+  productsList.replaceChildren();
+
+  if (!products.length) {
+    productsStatus.textContent = "لا توجد خامات لعرضها حاليًا.";
+    return;
+  }
+
+  products.forEach(product => {
+    const card = document.createElement("article");
+    card.className = "tile";
+    card.style.marginBottom = "12px";
+
+    const name = document.createElement("h3");
+    name.textContent = product.name || "خامة دون اسم";
+
+    const code = document.createElement("p");
+    code.textContent = "كود الخامة: " + (product.code || "—");
+
+    const price = document.createElement("p");
+    price.textContent = "السعر: " + formatMoney(product.price) + " جنيه";
+
+    const unit = document.createElement("p");
+    unit.textContent = "الوحدة: " + (product.unit || "—");
+
+    const stock = Math.max(0, Number(product.stock) || 0);
+    const stockText = document.createElement("p");
+    stockText.textContent = "الكمية المتاحة: " + stock;
+
+    const controls = document.createElement("div");
+    controls.style.display = "flex";
+    controls.style.alignItems = "center";
+    controls.style.gap = "12px";
+    controls.style.flexWrap = "wrap";
+
+    const minus = document.createElement("button");
+    minus.type = "button";
+    minus.className = "secondary";
+    minus.textContent = "−";
+    minus.setAttribute("aria-label", "تقليل كمية " + product.name);
+
+    const quantityText = document.createElement("strong");
+    quantityText.textContent = quantities[product.code] || 0;
+    quantityText.style.minWidth = "24px";
+    quantityText.style.textAlign = "center";
+
+    const plus = document.createElement("button");
+    plus.type = "button";
+    plus.className = "secondary";
+    plus.textContent = "+";
+    plus.setAttribute("aria-label", "زيادة كمية " + product.name);
+    plus.disabled = stock <= 0;
+
+    minus.disabled = !(quantities[product.code] > 0);
+
+    minus.addEventListener("click", () => {
+      quantities[product.code] = Math.max(
+        0,
+        (quantities[product.code] || 0) - 1
+      );
+      renderProducts();
+      updateSummary();
+    });
+
+    plus.addEventListener("click", () => {
+      const current = quantities[product.code] || 0;
+
+      if (current < stock) {
+        quantities[product.code] = current + 1;
+        renderProducts();
+        updateSummary();
+      }
+    });
+
+    controls.append(minus, quantityText, plus);
+
+    card.append(name, code, price, unit, stockText, controls);
+    productsList.appendChild(card);
+  });
+
+  productsStatus.textContent =
+    "تم تحميل " + products.length + " خامة بنجاح.";
+}
+
+async function loadProducts() {
+  productsStatus.textContent = "جارٍ تحميل الخامات...";
+  connectionNotice.textContent = "جارٍ الاتصال بنظام الخامات...";
+
+  try {
+    const response = await fetch(API_URL, {
+      method: "GET",
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error("رمز الاستجابة " + response.status);
+    }
+
+    const data = await response.json();
+
+    if (!data.success || !Array.isArray(data.products)) {
+      throw new Error(data.error || "استجابة غير صحيحة من النظام");
+    }
+
+    products = data.products;
+    window.fourPrintProducts = products;
+
+    renderProducts();
+    updateSummary();
+
+    connectionNotice.textContent =
+      "تم الاتصال بالنظام بنجاح وتحميل " + products.length + " خامة.";
+
+    if (testStatus) {
+      testStatus.textContent =
+        "نجح الاتصال بالنظام. عدد الخامات المحمّلة: " +
+        products.length;
+    }
+  } catch (error) {
+    productsStatus.textContent =
+      "تعذر تحميل الخامات: " + error.message;
+
+    connectionNotice.textContent =
+      "تعذر الاتصال بنظام الخامات. حدّث الصفحة وحاول مرة أخرى.";
+
+    if (testStatus) {
+      testStatus.textContent =
+        "فشل تحميل الخامات: " + error.message;
+    }
+
+    console.error("خطأ تحميل خامات 4Print:", error);
+  }
+}
+
+// تسجيل التطبيق القابل للتثبيت
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", async () => {
     try {
       await navigator.serviceWorker.register("./service-worker.js");
 
       if (testStatus) {
-        testStatus.textContent =
-          "نجح تسجيل Service Worker. جارٍ اختبار الاتصال بالخامات...";
+        testStatus.textContent = "تم تسجيل Service Worker. جارٍ تحميل الخامات...";
       }
     } catch (error) {
       if (testStatus) {
@@ -28,51 +190,11 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   });
 } else {
   if (testStatus) {
-    testStatus.textContent =
-      "افتح الصفحة من رابط HTTPS لاختبار خصائص PWA.";
+    testStatus.textContent = "افتح الصفحة من رابط HTTPS.";
   }
+  loadProducts();
 }
 
-// جلب الخامات الفعلية من Google Sheets عبر Cloudflare
-async function loadProducts() {
-  if (!testStatus) return;
-
-  try {
-    testStatus.textContent = "جارٍ تحميل الخامات من النظام...";
-
-    const response = await fetch(API_URL, {
-      method: "GET",
-      cache: "no-store"
-    });
-
-    if (!response.ok) {
-      throw new Error("رمز الاستجابة: " + response.status);
-    }
-
-    const data = await response.json();
-
-    if (!data.success || !Array.isArray(data.products)) {
-      throw new Error(data.error || "بيانات الخامات غير صحيحة");
-    }
-
-    window.fourPrintProducts = data.products;
-
-    testStatus.textContent =
-      "نجح الاتصال بالنظام. عدد الخامات المحمّلة: " +
-      data.products.length;
-
-    console.log("خامات 4Print:", data.products);
-
-    // عرض الخامات يحتاج إلى ربطها بعناصر واجهة HTML المناسبة.
-  } catch (error) {
-    testStatus.textContent =
-      "تعذر تحميل الخامات: " + error.message;
-
-    console.error("خطأ تحميل خامات 4Print:", error);
-  }
-}
-
-// تثبيت التطبيق
 if (installBtn) {
   window.addEventListener("beforeinstallprompt", event => {
     event.preventDefault();
@@ -82,9 +204,7 @@ if (installBtn) {
 
   installBtn.addEventListener("click", async () => {
     if (!installPrompt) {
-      alert(
-        "على آيفون: افتح الصفحة في Safari ثم اضغط مشاركة، وبعدها إضافة إلى الشاشة الرئيسية. على أندرويد استخدم قائمة المتصفح ثم تثبيت التطبيق أو إضافة إلى الشاشة الرئيسية."
-      );
+      alert("افتح قائمة المتصفح واختر إضافة إلى الشاشة الرئيسية أو تثبيت التطبيق.");
       return;
     }
 
@@ -95,30 +215,16 @@ if (installBtn) {
   });
 }
 
-// الرسائل التوضيحية الحالية
-const bookingInfo = document.getElementById("bookingInfo");
-if (bookingInfo) {
-  bookingInfo.addEventListener("click", () => {
-    alert(
-      "سيتم تفعيل الحجز بعد استكمال ربط نموذج الطلب والتحقق من البيانات."
-    );
-  });
-}
-
 const paymentInfo = document.getElementById("paymentInfo");
 if (paymentInfo) {
   paymentInfo.addEventListener("click", () => {
-    alert(
-      "أي سداد موجب بعد اعتماده يحجز الكمية كاملة، لكن تأكيد الاستلام لا يتم إلا بعد اعتماد كامل المبلغ."
-    );
+    alert("أي سداد موجب بعد اعتماده يحجز الكمية كاملة، والاستلام لا يُؤكّد إلا بعد اعتماد كامل المبلغ.");
   });
 }
 
 const dataInfo = document.getElementById("dataInfo");
 if (dataInfo) {
   dataInfo.addEventListener("click", () => {
-    alert(
-      "تُحمّل بيانات الخامات من النظام الفعلي. لم يتم تفعيل إرسال الطلبات أو بيانات الطلاب بعد."
-    );
+    alert("تُحمّل الخامات من النظام الفعلي. اختيار الكميات الحالي تجريبي ولا يسجل طلبًا في قاعدة البيانات.");
   });
 }
