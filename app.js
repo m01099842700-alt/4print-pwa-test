@@ -228,3 +228,74 @@ if (dataInfo) {
     alert("تُحمّل الخامات من النظام الفعلي. اختيار الكميات الحالي تجريبي ولا يسجل طلبًا في قاعدة البيانات.");
   });
 }
+
+const bookingForm = document.getElementById("bookingForm");
+const bookingStatus = document.getElementById("bookingStatus");
+const submitOrderBtn = document.getElementById("submitOrderBtn");
+
+if (bookingForm) {
+  bookingForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+
+    const name = document.getElementById("studentName").value.trim();
+    const phone = document.getElementById("studentPhone").value.trim();
+
+    const items = products
+      .filter(product => (quantities[product.code] || 0) > 0)
+      .map(product => ({
+        code: product.code,
+        quantity: quantities[product.code]
+      }));
+
+    if (items.length === 0) {
+      bookingStatus.textContent = "يرجى اختيار خامة واحدة على الأقل.";
+      return;
+    }
+
+    if (!bookingForm.reportValidity()) return;
+
+    if (!confirm("هل تريد إرسال طلب الحجز؟")) return;
+
+    submitOrderBtn.disabled = true;
+    bookingStatus.textContent = "جارٍ إرسال طلب الحجز...";
+
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name, phone, items })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || result.success !== true) {
+        throw new Error(result.error || "تعذر تسجيل الحجز.");
+      }
+
+      bookingStatus.textContent =
+        "تم تسجيل الحجز بنجاح. رقم الطلب: " +
+        result.orderId +
+        " — الإجمالي: " +
+        formatMoney(result.total) +
+        " جنيه.";
+
+      bookingForm.reset();
+
+      Object.keys(quantities).forEach(code => {
+        quantities[code] = 0;
+      });
+
+      renderProducts();
+      updateSummary();
+
+    } catch (error) {
+      bookingStatus.textContent =
+        "لم نتأكد من تسجيل الطلب: " + error.message +
+        " يُرجى التحقق من النظام قبل إعادة الإرسال.";
+    } finally {
+      submitOrderBtn.disabled = false;
+    }
+  });
+}
