@@ -1,225 +1,114 @@
-
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#16324f">
-  <meta name="description" content="منصة 4Print لحجز الخامات ومتابعة الطلبات">
-
+  <meta name="description" content="منصة 4Print لحجز الخامات ومتابعة الطلبات والسداد">
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" href="./icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="./apple-touch-icon.png">
   <link rel="stylesheet" href="./style.css">
-
-  <title>4Print | حجز الخامات ومتابعة الطلبات</title>
+  <title>4Print | حجز الخامات</title>
 </head>
 <body>
-  <header class="top">
-    <div class="brand">
-      <img
-        class="brand-logo"
-        src="./4print-logo-master.png"
-        alt="شعار 4Print"
-        width="100"
-        height="100"
-      >
-      <div>
-        <h1>4Print</h1>
-        <p>منصة حجز الخامات</p>
-      </div>
+<header class="top">
+  <div class="brand">
+    <img class="brand-logo" src="./4print-logo-master.png" alt="شعار 4Print" width="100" height="100">
+    <div><h1>4Print</h1><p>منصة حجز الخامات</p></div>
+  </div>
+  <button id="installBtn" class="install hidden" type="button">تثبيت التطبيق</button>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <span class="eyebrow">منصة 4Print</span>
+    <h2>احجز خاماتك بسهولة</h2>
+    <p>تعرّف على الخامات والأسعار والكميات المتاحة، ثم تابع طلبك وارفع إيصال التحويل عند الحاجة.</p>
+    <div class="notice" id="connectionNotice" role="status">
+      <strong>منصة 4Print</strong><span>جارٍ الاتصال بنظام الخامات...</span>
     </div>
+  </section>
 
-    <button id="installBtn" class="install hidden" type="button">
-      تثبيت التطبيق
-    </button>
-  </header>
+  <section class="card" id="materialsSection">
+    <h2>الخامات المتاحة</h2>
+    <p id="productsStatus" role="status">جارٍ تحميل الخامات...</p>
+    <div id="productsList"></div>
+  </section>
 
-  <main class="wrap">
-    <section class="hero">
-      <span class="eyebrow">منصة 4Print</span>
-      <h2>احجز خاماتك بسهولة</h2>
-      <p>تعرّف على الخامات والأسعار والكميات المتاحة، ثم أرسل طلبك وتابع السداد.</p>
+  <section class="card" id="bookingSection">
+    <h2>بيانات حجز الخامات</h2>
+    <div class="summary">
+      <p>عدد الأصناف المختارة: <strong id="selectedCount">0</strong></p>
+      <p>الإجمالي المبدئي: <strong id="orderTotal">0</strong> جنيه</p>
+    </div>
+    <p class="notice">لن يتم تسجيل الحجز إلا بعد إرسال الطلب بنجاح إلى النظام. لا تغلق الصفحة قبل ظهور نتيجة الإرسال.</p>
+    <form id="bookingForm">
+      <label for="studentName">الاسم الرباعي</label>
+      <input id="studentName" name="name" type="text" autocomplete="name" placeholder="اكتب الاسم الرباعي" required minlength="8">
+      <label for="studentPhone">رقم الهاتف المحمول</label>
+      <input id="studentPhone" name="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="01xxxxxxxxx" pattern="01[0125][0-9]{8}" required>
+      <button id="submitOrderBtn" class="primary" type="submit" disabled>إرسال طلب الحجز</button>
+      <p id="bookingStatus" role="status" aria-live="polite">جارٍ تجهيز نموذج الحجز...</p>
+    </form>
+    <div id="newOrderBox" class="result hidden" aria-live="polite"></div>
+  </section>
 
-      <div class="notice" id="connectionNotice" role="status">
-        <strong>منصة 4Print</strong>
-        <span>جارٍ الاتصال بنظام الخامات...</span>
-      </div>
-    </section>
+  <section class="card" id="statusSection">
+    <h2>الاستعلام عن طلب سابق</h2>
+    <p>أدخل رقم الطلب ورقم الهاتف المستخدم عند التسجيل لعرض حالة الطلب والسداد.</p>
+    <form id="statusForm">
+      <label for="lookupOrderId">رقم الطلب</label>
+      <input id="lookupOrderId" name="orderId" type="text" placeholder="مثال: KH-2026-XXXXXXXX" required>
+      <label for="lookupPhone">رقم الهاتف المحمول</label>
+      <input id="lookupPhone" name="phone" type="tel" inputmode="numeric" placeholder="01xxxxxxxxx" pattern="01[0125][0-9]{8}" required>
+      <button class="primary" id="lookupBtn" type="submit">استعلام عن الطلب</button>
+      <p id="statusMessage" role="status" aria-live="polite"></p>
+    </form>
+    <div id="orderStatusResult" class="result hidden" aria-live="polite"></div>
+  </section>
 
-    <section class="card" id="materialsSection">
-      <h2>الخامات المتاحة</h2>
-      <p id="productsStatus" role="status">جارٍ تحميل الخامات...</p>
-      <div id="productsList"></div>
-    </section>
+  <section class="card" id="proofSection">
+    <h2>إرسال إيصال التحويل الإلكتروني</h2>
+    <p>استخدم بيانات الطلب نفسها. يظل الإيصال قيد المراجعة حتى يعتمد أمين المكتبة السداد.</p>
+    <form id="proofForm">
+      <label for="proofOrderId">رقم الطلب</label>
+      <input id="proofOrderId" name="orderId" type="text" placeholder="رقم الطلب" required>
+      <label for="proofPhone">رقم الهاتف المحمول</label>
+      <input id="proofPhone" name="phone" type="tel" inputmode="numeric" placeholder="01xxxxxxxxx" pattern="01[0125][0-9]{8}" required>
+      <label for="proofAmount">المبلغ المحوَّل بالجنيه</label>
+      <input id="proofAmount" name="amount" type="number" min="0.01" step="0.01" placeholder="اكتب المبلغ" required>
+      <label for="proofFile">صورة أو ملف إيصال التحويل (JPG أو PNG أو PDF، بحد أقصى 5 ميجابايت)</label>
+      <input id="proofFile" name="proofFile" type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" required>
+      <button class="primary" id="submitProofBtn" type="submit">إرسال إيصال التحويل</button>
+      <p id="proofMessage" role="status" aria-live="polite"></p>
+    </form>
+  </section>
 
-    <section class="card" id="bookingSection">
-      <h2>بيانات حجز الخامات</h2>
+  <section class="grid">
+    <article class="tile">
+      <div class="tile-icon">💳</div><h3>قواعد السداد</h3>
+      <p>إيصال التحويل لا يُعد معتمدًا بمجرد إرساله. يراجع أمين المكتبة السداد، ويُحجز كامل الطلب عند اعتماد دفعة موجبة.</p>
+      <button class="secondary" id="paymentInfo" type="button">مزيد من المعلومات</button>
+    </article>
+    <article class="tile">
+      <div class="tile-icon">📦</div><h3>حماية البيانات</h3>
+      <p>تبقى بيانات الطلبات والمدفوعات وحركة المخزون في ملف Google Sheets الحالي.</p>
+      <button class="secondary" id="dataInfo" type="button">معلومات البيانات</button>
+    </article>
+  </section>
 
-      <p>عدد الأصناف المختارة:
-        <strong id="selectedCount">0</strong>
-      </p>
-
-      <p>الإجمالي المبدئي:
-        <strong id="orderTotal">0</strong> جنيه
-      </p>
-
-      <p class="notice">
-        اختيار الخامات لا يسجل حجزًا. يجب إرسال الطلب وانتظار تأكيد النظام.
-      </p>
-
-      <form id="bookingForm">
-        <label for="studentName">الاسم الرباعي</label>
-        <input
-          id="studentName"
-          name="name"
-          type="text"
-          autocomplete="name"
-          placeholder="اكتب الاسم الرباعي"
-          required
-          minlength="8"
-        >
-
-        <label for="studentPhone">رقم الهاتف المحمول</label>
-        <input
-          id="studentPhone"
-          name="phone"
-          type="tel"
-          inputmode="numeric"
-          autocomplete="tel"
-          placeholder="01xxxxxxxxx"
-          pattern="01[0125][0-9]{8}"
-          required
-        >
-
-        <button id="submitOrderBtn" type="submit" disabled>
-          إرسال طلب الحجز
-        </button>
-
-        <p id="bookingStatus" role="status" aria-live="polite">
-          جارٍ تجهيز نموذج الحجز...
-        </p>
-      </form>
-    </section>
-
-    <section class="card" id="orderFollowSection">
-      <h2>متابعة الطلب وإرسال إثبات التحويل</h2>
-      <p>
-        أدخل رقم الطلب ورقم الهاتف المسجلين عند الحجز لعرض حالة السداد
-        وإرسال إثبات التحويل الإلكتروني.
-      </p>
-
-      <form id="orderLookupForm">
-        <label for="lookupOrderId">رقم الطلب</label>
-        <input
-          id="lookupOrderId"
-          name="orderId"
-          type="text"
-          placeholder="مثال: KH-2026-XXXXXXXX"
-          autocomplete="off"
-          required
-        >
-
-        <label for="lookupPhone">رقم الهاتف المسجل في الطلب</label>
-        <input
-          id="lookupPhone"
-          name="phone"
-          type="tel"
-          inputmode="numeric"
-          placeholder="01xxxxxxxxx"
-          pattern="01[0125][0-9]{8}"
-          autocomplete="tel"
-          required
-        >
-
-        <button id="lookupOrderBtn" type="submit">
-          عرض حالة الطلب
-        </button>
-      </form>
-
-      <div id="orderStatusCard" class="tile" hidden aria-live="polite">
-        <h3>ملخص الطلب</h3>
-        <p>رقم الطلب: <strong id="statusOrderId">—</strong></p>
-        <p>حالة الطلب: <strong id="statusOrderState">—</strong></p>
-        <p>إجمالي الطلب: <strong id="statusTotal">—</strong> جنيه</p>
-        <p>المبلغ المعتمد: <strong id="statusPaid">—</strong> جنيه</p>
-        <p>المبلغ المعلّق للمراجعة: <strong id="statusPending">—</strong> جنيه</p>
-        <p>المتبقي من إجمالي الطلب: <strong id="statusRemaining">—</strong> جنيه</p>
-        <p>حالة السداد: <strong id="statusPaymentState">—</strong></p>
-        <p id="orderStatusMessage" role="status"></p>
-      </div>
-
-      <form id="proofForm" hidden>
-        <h3>إرسال إثبات التحويل الإلكتروني</h3>
-
-        <p>
-          أدخل مبلغ التحويل الذي يوضحه الإيصال. سيظل الإثبات
-          بانتظار مراجعة أمين المكتبة، ولن يُعتمد تلقائيًا.
-        </p>
-
-        <label for="proofAmount">مبلغ التحويل بالجنيه</label>
-        <input
-          id="proofAmount"
-          name="amount"
-          type="number"
-          min="0.01"
-          step="0.01"
-          inputmode="decimal"
-          required
-        >
-
-        <label for="proofFile">ملف إثبات التحويل (JPG أو PNG أو PDF)</label>
-        <input
-          id="proofFile"
-          name="proofFile"
-          type="file"
-          accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
-          required
-        >
-
-        <p>الحد الأقصى لحجم الملف: 5 ميجابايت.</p>
-
-        <button id="submitProofBtn" type="submit">
-          إرسال إثبات التحويل
-        </button>
-
-        <p id="proofStatus" role="status" aria-live="polite"></p>
-      </form>
-    </section>
-
-    <section class="grid">
-      <article class="tile">
-        <div class="tile-icon">💳</div>
-        <h3>السداد وإيصال التحويل</h3>
-        <p>تظل التحويلات معلقة حتى يراجعها أمين المكتبة ويعتمدها.</p>
-        <button class="secondary" id="paymentInfo" type="button">
-          قواعد السداد
-        </button>
-      </article>
-
-      <article class="tile">
-        <div class="tile-icon">📦</div>
-        <h3>حماية البيانات</h3>
-        <p>تبقى بيانات الطلبات والمدفوعات وحركة المخزون في ملف Google Sheets الحالي.</p>
-        <button class="secondary" id="dataInfo" type="button">
-          معلومات البيانات
-        </button>
-      </article>
-    </section>
-
-    <section class="card">
-      <h3>حالة التطبيق</h3>
-      <p id="testStatus">جارٍ فحص دعم تثبيت التطبيق...</p>
-      <ul>
-        <li>يعمل التطبيق من خلال HTTPS.</li>
-        <li>يمكن تثبيته على الهاتف عند دعم المتصفح لذلك.</li>
-        <li>الحجز ومتابعة السداد يحتاجان إلى اتصال بالإنترنت.</li>
-      </ul>
-    </section>
-
-    <footer>4Print · منصة حجز الخامات</footer>
-  </main>
-
-  <script src="./app.js" defer></script>
+  <section class="card">
+    <h3>حالة التطبيق</h3>
+    <p id="testStatus">جارٍ فحص دعم تثبيت التطبيق...</p>
+    <ul>
+      <li>يعمل التطبيق من خلال HTTPS.</li>
+      <li>يمكن تثبيته على الهاتف عند دعم المتصفح لذلك.</li>
+      <li>الحجز والاستعلام وإرسال الإيصال يحتاجون إلى اتصال بالإنترنت.</li>
+    </ul>
+  </section>
+  <footer>4Print · منصة حجز الخامات</footer>
+</main>
+<script src="./app.js" defer></script>
 </body>
 </html>
