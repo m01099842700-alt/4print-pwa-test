@@ -1,968 +1,438 @@
-
 "use strict";
-
-// ========================================
-// إعدادات منصة 4Print
-// ========================================
-
-let installPrompt = null;
-let isSubmitting = false;
-let isLookingUpOrder = false;
-let isSubmittingProof = false;
-let currentOrderStatus = null;
 
 const API_URL = "https://4print-api.m01099842700.workers.dev/";
 const PENDING_ORDER_KEY = "4print_pending_order_v1";
-const LAST_ORDER_KEY = "4print_last_order_v1";
-const MAX_PROOF_SIZE = 5 * 1024 * 1024;
+const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 
-const installBtn = document.getElementById("installBtn");
-const testStatus = document.getElementById("testStatus");
-const productsStatus = document.getElementById("productsStatus");
-const productsList = document.getElementById("productsList");
-const connectionNotice = document.getElementById("connectionNotice");
-
-const selectedCount = document.getElementById("selectedCount");
-const orderTotal = document.getElementById("orderTotal");
-
-const bookingForm = document.getElementById("bookingForm");
-const bookingStatus = document.getElementById("bookingStatus");
-const submitOrderBtn = document.getElementById("submitOrderBtn");
-
-const paymentInfo = document.getElementById("paymentInfo");
-const dataInfo = document.getElementById("dataInfo");
-
-const orderLookupForm = document.getElementById("orderLookupForm");
-const lookupOrderBtn = document.getElementById("lookupOrderBtn");
-const lookupOrderId = document.getElementById("lookupOrderId");
-const lookupPhone = document.getElementById("lookupPhone");
-
-const orderStatusCard = document.getElementById("orderStatusCard");
-const statusOrderId = document.getElementById("statusOrderId");
-const statusOrderState = document.getElementById("statusOrderState");
-const statusTotal = document.getElementById("statusTotal");
-const statusPaid = document.getElementById("statusPaid");
-const statusPending = document.getElementById("statusPending");
-const statusRemaining = document.getElementById("statusRemaining");
-const statusPaymentState = document.getElementById("statusPaymentState");
-const orderStatusMessage = document.getElementById("orderStatusMessage");
-
-const proofForm = document.getElementById("proofForm");
-const proofAmount = document.getElementById("proofAmount");
-const proofFile = document.getElementById("proofFile");
-const submitProofBtn = document.getElementById("submitProofBtn");
-const proofStatus = document.getElementById("proofStatus");
-
+let installPrompt = null;
+let isSubmitting = false;
 let products = [];
-const quantities = Object.create(null);
+let quantities = Object.create(null);
 
-// ========================================
-// طلبات محفوظة محليًا
-// ========================================
+const $ = id => document.getElementById(id);
 
-function getPendingOrder() {
-  try {
-    const raw = localStorage.getItem(PENDING_ORDER_KEY);
-    if (!raw) return null;
+const installBtn = $("installBtn");
+const testStatus = $("testStatus");
+const productsStatus = $("productsStatus");
+const productsList = $("productsList");
+const connectionNotice = $("connectionNotice");
+const selectedCount = $("selectedCount");
+const orderTotal = $("orderTotal");
+const bookingForm = $("bookingForm");
+const bookingStatus = $("bookingStatus");
+const submitOrderBtn = $("submitOrderBtn");
+const newOrderBox = $("newOrderBox");
+const statusForm = $("statusForm");
+const statusMessage = $("statusMessage");
+const orderStatusResult = $("orderStatusResult");
+const proofForm = $("proofForm");
+const proofMessage = $("proofMessage");
+const submitProofBtn = $("submitProofBtn");
 
-    const pending = JSON.parse(raw);
-
-    if (
-      !pending ||
-      typeof pending.idempotencyKey !== "string" ||
-      !pending.payload ||
-      !Array.isArray(pending.payload.items)
-    ) {
-      return null;
-    }
-
-    return pending;
-  } catch (error) {
-    console.error("تعذر قراءة محاولة الحجز:", error);
-    return null;
-  }
+function setMessage(element, message, kind = "") {
+  if (!element) return;
+  element.textContent = message;
+  element.classList.remove("status-ok", "status-error", "status-warn");
+  if (kind) element.classList.add(kind);
 }
 
-function createIdempotencyKey() {
-  if (
-    window.crypto &&
-    typeof window.crypto.randomUUID === "function"
-  ) {
-    return window.crypto.randomUUID().replace(/-/g, "");
-  }
-
-  if (window.crypto && window.crypto.getRandomValues) {
-    const bytes = new Uint8Array(16);
-    window.crypto.getRandomValues(bytes);
-
-    return Array.from(bytes)
-      .map(byte => byte.toString(16).padStart(2, "0"))
-      .join("");
-  }
-
-  throw new Error(
-    "تعذر إنشاء مفتاح آمن. افتح التطبيق عبر رابط HTTPS."
-  );
+function money(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString("en-US", {maximumFractionDigits: 2}) : "—";
 }
 
-function savePendingOrder(pending) {
-  localStorage.setItem(
-    PENDING_ORDER_KEY,
-    JSON.stringify(pending)
-  );
+function normalizePhone(value) {
+  return String(value || "").replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d))
+    .replace(/[۰-۹]/g, d => "۰۱۲۳۴۵۶۷۸۹".indexOf(d))
+    .replace(/[\s()-]/g, "");
 }
 
-function clearPendingOrder(idempotencyKey) {
-  const pending = getPendingOrder();
-
-  if (
-    pending &&
-    pending.idempotencyKey === idempotencyKey
-  ) {
-    localStorage.removeItem(PENDING_ORDER_KEY);
-  }
+function validEgyptianPhone(value) {
+  return /^01[0125]\d{8}$/.test(normalizePhone(value));
 }
 
-function saveLastOrder(order) {
-  // نحفظ معلومات مختصرة للرجوع إليها؛ لا نحفظ أي ملف إثبات هنا.
-  localStorage.setItem(
-    LAST_ORDER_KEY,
-    JSON.stringify({
-      orderId: String(order.orderId || ""),
-      phone: String(order.phone || ""),
-      total: Number(order.total || 0),
-      savedAt: new Date().toISOString()
-    })
-  );
+function makeIdempotencyKey() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+  return "4p-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
 }
 
-function getLastOrder() {
-  try {
-    const raw = localStorage.getItem(LAST_ORDER_KEY);
-    if (!raw) return null;
-
-    const order = JSON.parse(raw);
-
-    if (!order || !order.orderId || !order.phone) {
-      return null;
-    }
-
-    return order;
-  } catch (error) {
-    console.error("تعذر قراءة آخر طلب:", error);
-    return null;
-  }
-}
-
-function restoreLastOrder() {
-  const order = getLastOrder();
-  if (!order) return;
-
-  if (lookupOrderId) {
-    lookupOrderId.value = order.orderId;
-  }
-
-  if (lookupPhone) {
-    lookupPhone.value = order.phone;
-  }
-}
-
-function restorePendingOrder() {
-  const pending = getPendingOrder();
-  if (!pending) return false;
-
-  const payload = pending.payload;
-  const nameInput = document.getElementById("studentName");
-  const phoneInput = document.getElementById("studentPhone");
-
-  if (nameInput) nameInput.value = payload.name || "";
-  if (phoneInput) phoneInput.value = payload.phone || "";
-
-  Object.keys(quantities).forEach(code => {
-    quantities[code] = 0;
-  });
-
-  payload.items.forEach(item => {
-    if (item && item.code) {
-      quantities[item.code] = Number(item.quantity) || 0;
-    }
-  });
-
-  return true;
-}
-
-// ========================================
-// أدوات عامة
-// ========================================
-
-function formatMoney(value) {
-  return Number(value || 0).toLocaleString("ar-EG", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2
-  });
-}
-
-function setText(element, value) {
-  if (element) {
-    element.textContent = value == null ? "" : String(value);
-  }
-}
-
-function normalizePhoneForDisplay(value) {
-  return String(value || "").replace(/\s+/g, "");
-}
-
-async function postJson(api, payload) {
-  const response = await fetch(API_URL + "?api=" + encodeURIComponent(api), {
+async function apiPost(route, data) {
+  const response = await fetch(API_URL + "?api=" + encodeURIComponent(route), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload),
-    cache: "no-store"
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(data)
   });
-
+  const text = await response.text();
   let result;
-  try {
-    result = await response.json();
-  } catch (error) {
-    throw new Error(
-      "تعذر قراءة رد النظام. لا تعاود إرسال عملية غير مؤكدة قبل مراجعة حالتها."
-    );
-  }
-
-  if (!response.ok || !result || result.success !== true) {
-    throw new Error(
-      result?.error || result?.message || "لم ينجح الطلب."
-    );
-  }
-
+  try { result = JSON.parse(text); }
+  catch (_) { throw new Error("لم تصل استجابة مفهومة من النظام. لا تكرر إرسال الحجز قبل مراجعة حالة الاتصال."); }
+  if (!response.ok && result.success !== false) throw new Error("تعذر الاتصال بالنظام (HTTP " + response.status + ").");
   return result;
 }
 
-// ========================================
-// ملخص الاختيار
-// ========================================
-
-function updateSummary() {
-  let count = 0;
-  let total = 0;
-
-  products.forEach(product => {
-    const quantity = Number(quantities[product.code] || 0);
-
-    if (quantity > 0) {
-      count++;
-      total += quantity * Number(product.price || 0);
+async function loadProducts() {
+  setMessage(productsStatus, "جارٍ تحميل الخامات...");
+  try {
+    const response = await fetch(API_URL + "?api=products", {method: "GET", cache: "no-store"});
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const data = await response.json();
+    if (!data || data.success !== true || !Array.isArray(data.products)) {
+      throw new Error("صيغة بيانات الخامات غير صحيحة");
     }
-  });
-
-  setText(selectedCount, count);
-  setText(orderTotal, formatMoney(total));
+    products = data.products;
+    const validCodes = new Set(products.map(p => String(p.code)));
+    Object.keys(quantities).forEach(code => { if (!validCodes.has(code)) delete quantities[code]; });
+    renderProducts();
+    updateSummary();
+    setMessage(productsStatus, "تم تحميل " + products.length + " خامة.", "status-ok");
+    if (connectionNotice) {
+      connectionNotice.replaceChildren();
+      const strong = document.createElement("strong");
+      strong.textContent = "الاتصال ناجح";
+      const span = document.createElement("span");
+      span.textContent = "تم الاتصال بنظام الخامات.";
+      connectionNotice.append(strong, span);
+    }
+    updateSummary();
+  } catch (error) {
+    setMessage(productsStatus, "تعذر تحميل الخامات: " + error.message, "status-error");
+    setMessage(bookingStatus, "تعذر الاتصال بالنظام. أعد تحميل الصفحة بعد التأكد من الإنترنت.", "status-error");
+    if (connectionNotice) {
+      connectionNotice.replaceChildren();
+      const strong = document.createElement("strong");
+      strong.textContent = "تعذر الاتصال";
+      const span = document.createElement("span");
+      span.textContent = "تحقق من الإنترنت ثم أعد المحاولة.";
+      connectionNotice.append(strong, span);
+    }
+    submitOrderBtn.disabled = true;
+  }
 }
 
-// ========================================
-// عرض الخامات
-// ========================================
-
 function renderProducts() {
-  if (!productsList) return;
-
   productsList.replaceChildren();
-
   if (!products.length) {
-    setText(productsStatus, "لا توجد خامات لعرضها حاليًا.");
+    productsList.textContent = "لا توجد خامات متاحة للعرض حاليًا.";
     return;
   }
-
   products.forEach(product => {
-    const card = document.createElement("article");
-    card.className = "tile";
-    card.style.marginBottom = "12px";
-
-    const name = document.createElement("h3");
-    name.textContent = product.name || "خامة دون اسم";
-
-    const code = document.createElement("p");
-    code.textContent = "كود الخامة: " + (product.code || "—");
-
-    const price = document.createElement("p");
-    price.textContent =
-      "السعر: " + formatMoney(product.price) + " جنيه";
-
-    const unit = document.createElement("p");
-    unit.textContent = "الوحدة: " + (product.unit || "—");
-
+    const code = String(product.code);
     const stock = Math.max(0, Number(product.stock) || 0);
+    const qty = Number(quantities[code]) || 0;
 
-    const stockText = document.createElement("p");
-    stockText.textContent = "الكمية المتاحة: " + stock;
+    const card = document.createElement("div");
+    card.className = "product";
+
+    const info = document.createElement("div");
+    const name = document.createElement("h3");
+    name.textContent = String(product.name || "خامة");
+    const meta = document.createElement("div");
+    meta.className = "product-meta";
+    meta.textContent = "السعر: " + money(product.price) + " جنيه · المتاح: " + money(stock) + " " + String(product.unit || "");
+    info.append(name, meta);
 
     const controls = document.createElement("div");
-    controls.style.display = "flex";
-    controls.style.alignItems = "center";
-    controls.style.gap = "12px";
-    controls.style.flexWrap = "wrap";
-
+    controls.className = "product-controls";
     const minus = document.createElement("button");
     minus.type = "button";
-    minus.className = "secondary";
+    minus.className = "qty-btn";
     minus.textContent = "−";
-    minus.setAttribute("aria-label", "تقليل كمية " + product.name);
+    minus.setAttribute("aria-label", "تقليل كمية " + String(product.name || ""));
+    minus.disabled = qty <= 0;
+    minus.addEventListener("click", () => changeQuantity(code, -1));
 
-    const quantityText = document.createElement("strong");
-    quantityText.textContent = quantities[product.code] || 0;
-    quantityText.style.minWidth = "24px";
-    quantityText.style.textAlign = "center";
+    const qtyText = document.createElement("span");
+    qtyText.className = "qty";
+    qtyText.textContent = String(qty);
 
     const plus = document.createElement("button");
     plus.type = "button";
-    plus.className = "secondary";
+    plus.className = "qty-btn";
     plus.textContent = "+";
-    plus.setAttribute("aria-label", "زيادة كمية " + product.name);
+    plus.setAttribute("aria-label", "زيادة كمية " + String(product.name || ""));
+    plus.disabled = qty >= stock || stock <= 0;
+    plus.addEventListener("click", () => changeQuantity(code, 1));
 
-    plus.disabled =
-      stock <= 0 ||
-      (quantities[product.code] || 0) >= stock;
+    controls.append(minus, qtyText, plus);
+    card.append(info, controls);
+    productsList.append(card);
+  });
+}
 
-    minus.disabled = !(quantities[product.code] > 0);
+function changeQuantity(code, delta) {
+  const product = products.find(p => String(p.code) === code);
+  if (!product) return;
+  const stock = Math.max(0, Number(product.stock) || 0);
+  const next = Math.max(0, Math.min(stock, (Number(quantities[code]) || 0) + delta));
+  if (next === 0) delete quantities[code];
+  else quantities[code] = next;
+  renderProducts();
+  updateSummary();
+}
 
-    minus.addEventListener("click", () => {
-      quantities[product.code] = Math.max(
-        0,
-        (quantities[product.code] || 0) - 1
-      );
+function selectedItems() {
+  return products.filter(p => Number(quantities[String(p.code)]) > 0).map(p => ({
+    code: String(p.code),
+    name: String(p.name || ""),
+    quantity: Number(quantities[String(p.code)]),
+    price: Number(p.price) || 0
+  }));
+}
 
+function updateSummary() {
+  const items = selectedItems();
+  const count = items.reduce((sum, item) => sum + item.quantity, 0);
+  const total = items.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  selectedCount.textContent = String(count);
+  orderTotal.textContent = money(total);
+  submitOrderBtn.disabled = isSubmitting || products.length === 0 || items.length === 0;
+}
+
+function showNewOrder(orderId, total, message) {
+  newOrderBox.classList.remove("hidden");
+  newOrderBox.replaceChildren();
+  const heading = document.createElement("h3");
+  heading.textContent = "تم تسجيل طلب الحجز";
+  const id = document.createElement("p");
+  id.textContent = "رقم الطلب: " + orderId;
+  const totalLine = document.createElement("p");
+  totalLine.textContent = "إجمالي الطلب: " + money(total) + " جنيه";
+  const note = document.createElement("p");
+  note.textContent = message || "احتفظ برقم الطلب للاستعلام عنه لاحقًا. لا يُحجز المخزون قبل اعتماد دفعة موجبة.";
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "secondary";
+  copy.textContent = "نسخ رقم الطلب";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(orderId);
+      copy.textContent = "تم نسخ رقم الطلب";
+    } catch (_) {
+      copy.textContent = "انسخ رقم الطلب يدويًا";
+    }
+  });
+  newOrderBox.append(heading, id, totalLine, note, copy);
+  $("lookupOrderId").value = orderId;
+  $("proofOrderId").value = orderId;
+  $("lookupPhone").value = $("studentPhone").value;
+  $("proofPhone").value = $("studentPhone").value;
+}
+
+bookingForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  if (isSubmitting) return;
+
+  const name = $("studentName").value.trim().replace(/\s+/g, " ");
+  const phone = normalizePhone($("studentPhone").value);
+  const items = selectedItems();
+
+  if (name.split(" ").filter(Boolean).length < 4) {
+    setMessage(bookingStatus, "يرجى كتابة الاسم الرباعي كاملًا.", "status-error");
+    return;
+  }
+  if (!validEgyptianPhone(phone)) {
+    setMessage(bookingStatus, "يرجى إدخال رقم هاتف محمول مصري صحيح يبدأ بـ 010 أو 011 أو 012 أو 015.", "status-error");
+    return;
+  }
+  if (!items.length) {
+    setMessage(bookingStatus, "اختر كمية من خامة واحدة على الأقل.", "status-error");
+    return;
+  }
+
+  let pending;
+  try { pending = JSON.parse(localStorage.getItem(PENDING_ORDER_KEY) || "null"); } catch (_) {}
+  if (pending && pending.idempotencyKey) {
+    setMessage(bookingStatus, "يوجد إرسال سابق لم يُحسم بعد. سنعيد إرسال نفس الطلب للتحقق من نتيجته بدل إنشاء محاولة جديدة.", "status-warn");
+    pending.name = name;
+    pending.phone = phone;
+    pending.items = items;
+  } else {
+    pending = {name, phone, items, idempotencyKey: makeIdempotencyKey(), createdAt: Date.now()};
+  }
+
+  isSubmitting = true;
+  submitOrderBtn.disabled = true;
+  setMessage(bookingStatus, "جارٍ إرسال طلب الحجز...");
+  try {
+    localStorage.setItem(PENDING_ORDER_KEY, JSON.stringify(pending));
+    const result = await apiPost("order", pending);
+    if (result && result.success === true) {
+      localStorage.removeItem(PENDING_ORDER_KEY);
+      const orderId = result.orderId || result.id || "راجع رسالة نجاح الطلب";
+      const total = result.total;
+      setMessage(bookingStatus, "تم إرسال الطلب بنجاح.", "status-ok");
+      showNewOrder(String(orderId), total, result.message);
+      bookingForm.reset();
+      quantities = Object.create(null);
       renderProducts();
       updateSummary();
-    });
-
-    plus.addEventListener("click", () => {
-      const current = quantities[product.code] || 0;
-
-      if (current < stock) {
-        quantities[product.code] = current + 1;
-        renderProducts();
-        updateSummary();
-      }
-    });
-
-    controls.append(minus, quantityText, plus);
-    card.append(name, code, price, unit, stockText, controls);
-    productsList.appendChild(card);
-  });
-
-  setText(
-    productsStatus,
-    "تم تحميل " + products.length + " خامة بنجاح."
-  );
-}
-
-// ========================================
-// تحميل الخامات
-// ========================================
-
-function setBookingUnavailable(message) {
-  setText(bookingStatus, message);
-  if (submitOrderBtn) submitOrderBtn.disabled = true;
-}
-
-async function loadProducts() {
-  setText(productsStatus, "جارٍ تحميل الخامات...");
-  setText(connectionNotice, "جارٍ الاتصال بنظام الخامات...");
-
-  if (submitOrderBtn) submitOrderBtn.disabled = true;
-
-  try {
-    const response = await fetch(API_URL, {
-      method: "GET",
-      cache: "no-store"
-    });
-
-    if (!response.ok) {
-      throw new Error("رمز الاستجابة " + response.status);
-    }
-
-    const data = await response.json();
-
-    if (
-      !data ||
-      data.success !== true ||
-      !Array.isArray(data.products)
-    ) {
-      throw new Error(data?.error || "استجابة الخامات غير صحيحة.");
-    }
-
-    products = data.products;
-    window.fourPrintProducts = products;
-
-    const hasPendingOrder = restorePendingOrder();
-
-    renderProducts();
-    updateSummary();
-
-    if (submitOrderBtn) submitOrderBtn.disabled = false;
-
-    if (hasPendingOrder) {
-      setText(
-        bookingStatus,
-        "توجد محاولة حجز سابقة لم تُحسم نتيجتها. " +
-        "إعادة المحاولة سترسل بيانات المحاولة نفسها."
-      );
-    } else {
-      setText(
-        bookingStatus,
-        "النظام جاهز. اختر الخامات وأدخل بياناتك لإرسال طلب الحجز."
-      );
-    }
-
-    setText(connectionNotice, "تم الاتصال بنظام الخامات بنجاح.");
-
-  } catch (error) {
-    console.error("خطأ تحميل الخامات:", error);
-    setText(productsStatus, "تعذر تحميل الخامات.");
-    setText(
-      connectionNotice,
-      "تعذر الاتصال بالنظام. حدّث الصفحة وحاول مرة أخرى."
-    );
-
-    setBookingUnavailable(
-      "لم يتم تحميل الخامات. لن تتمكن من إرسال حجز حتى نجاح الاتصال."
-    );
-  }
-}
-
-// ========================================
-// إرسال طلب الحجز
-// ========================================
-
-if (bookingForm) {
-  bookingForm.addEventListener("submit", async event => {
-    event.preventDefault();
-    if (isSubmitting) return;
-
-    if (!products.length) {
-      setBookingUnavailable(
-        "الخامات غير محمّلة. حدّث الصفحة وحاول مرة أخرى."
-      );
-      return;
-    }
-
-    let pending = getPendingOrder();
-    let payload;
-
-    if (pending) {
-      const retry = confirm(
-        "توجد محاولة حجز سابقة لم تُحسم نتيجتها.\n\n" +
-        "سيعيد النظام إرسال بيانات الحجز السابقة نفسها، " +
-        "ولن يرسل الاختيارات الحالية كحجز جديد.\n\n" +
-        "هل تريد إعادة المحاولة؟"
-      );
-
-      if (!retry) return;
-      payload = pending.payload;
-
-    } else {
-      if (!bookingForm.reportValidity()) return;
-
-      const name =
-        document.getElementById("studentName")?.value.trim() || "";
-      const phone =
-        document.getElementById("studentPhone")?.value.trim() || "";
-
-      const items = products
-        .filter(product => (quantities[product.code] || 0) > 0)
-        .map(product => ({
-          code: product.code,
-          quantity: Number(quantities[product.code])
-        }));
-
-      if (!name || !phone) {
-        setText(bookingStatus, "يرجى إدخال الاسم الرباعي ورقم الهاتف.");
-        return;
-      }
-
-      if (!items.length) {
-        setText(bookingStatus, "يرجى اختيار خامة واحدة على الأقل.");
-        return;
-      }
-
-      if (!confirm(
-        "هل تريد إرسال طلب الحجز؟ تأكد من الاسم والخامات والكميات قبل المتابعة."
-      )) {
-        return;
-      }
-
-      let idempotencyKey;
-      try {
-        idempotencyKey = createIdempotencyKey();
-      } catch (error) {
-        setText(bookingStatus, error.message);
-        return;
-      }
-
-      payload = {
-        name,
-        phone,
-        items,
-        idempotencyKey
-      };
-
-      pending = {
-        idempotencyKey,
-        payload
-      };
-
-      try {
-        savePendingOrder(pending);
-      } catch (error) {
-        console.error("تعذر حفظ محاولة الحجز:", error);
-        setText(
-          bookingStatus,
-          "تعذر حفظ محاولة الحجز على هذا الجهاز؛ لم يتم إرسال الطلب."
-        );
-        return;
-      }
-    }
-
-    isSubmitting = true;
-
-    if (submitOrderBtn) {
-      submitOrderBtn.disabled = true;
-      submitOrderBtn.textContent = "جارٍ إرسال الطلب...";
-    }
-
-    setText(
-      bookingStatus,
-      "جارٍ إرسال الحجز والتحقق من نتيجته. يرجى الانتظار."
-    );
-
-    try {
-      const result = await postJson("order", payload);
-
-      if (!result.orderId) {
-        throw new Error(
-          "لم يتضمن رد النظام رقم الطلب؛ احتفظ بمحاولة الحجز ولا تنشئ طلبًا جديدًا."
-        );
-      }
-
-      // حفظ رقم الطلب والهاتف للرجوع إلى متابعة السداد.
-      saveLastOrder({
-        orderId: result.orderId,
-        phone: payload.phone,
-        total: result.total
-      });
-
-      clearPendingOrder(pending.idempotencyKey);
-
-      bookingForm.reset();
-      Object.keys(quantities).forEach(code => {
-        quantities[code] = 0;
-      });
-
       await loadProducts();
-
-      setText(
-        bookingStatus,
-        "تم تأكيد الحجز بنجاح. رقم الطلب: " +
-        result.orderId +
-        " — الإجمالي: " +
-        formatMoney(result.total) +
-        " جنيه. احتفظ برقم الطلب، ويمكنك متابعة السداد أدناه."
-      );
-
-      restoreLastOrder();
-
-      if (orderStatusCard) orderStatusCard.hidden = true;
-      if (proofForm) proofForm.hidden = true;
-
-      document.getElementById("orderFollowSection")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-      });
-
-    } catch (error) {
-      console.error("نتيجة إرسال طلب 4Print:", error);
-
-      setText(
-        bookingStatus,
-        "لم نتمكن من التأكد من نتيجة الحجز. لا تنشئ طلبًا جديدًا. " +
-        "يمكنك إعادة المحاولة لإرسال المحاولة المحفوظة نفسها. " +
-        "التفاصيل: " + error.message
-      );
-
-    } finally {
-      isSubmitting = false;
-
-      if (submitOrderBtn) {
-        submitOrderBtn.textContent = "إرسال طلب الحجز";
-        submitOrderBtn.disabled = products.length === 0;
-      }
+    } else {
+      setMessage(bookingStatus, (result && result.error) || (result && result.message) || "لم يتم تسجيل الطلب. راجع البيانات وحاول مرة أخرى.", "status-error");
     }
+  } catch (error) {
+    setMessage(bookingStatus, error.message || "تعذر تأكيد نتيجة الإرسال. احتفظ بالصفحة وافحص حالة الاتصال قبل بدء طلب جديد.", "status-error");
+  } finally {
+    isSubmitting = false;
+    updateSummary();
+  }
+});
+
+statusForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const orderId = $("lookupOrderId").value.trim();
+  const phone = normalizePhone($("lookupPhone").value);
+  if (!validEgyptianPhone(phone)) {
+    setMessage(statusMessage, "أدخل رقم هاتف محمول مصري صحيح.", "status-error");
+    return;
+  }
+  setMessage(statusMessage, "جارٍ الاستعلام...");
+  orderStatusResult.classList.add("hidden");
+  try {
+    const result = await apiPost("status", {orderId, phone});
+    if (!result || result.success !== true) throw new Error((result && (result.error || result.message)) || "تعذر العثور على الطلب بهذه البيانات.");
+    renderOrderStatus(result);
+    setMessage(statusMessage, "تم جلب حالة الطلب.", "status-ok");
+    $("proofOrderId").value = orderId;
+    $("proofPhone").value = phone;
+  } catch (error) {
+    setMessage(statusMessage, error.message || "تعذر الاستعلام عن الطلب.", "status-error");
+  }
+});
+
+function renderOrderStatus(data) {
+  orderStatusResult.classList.remove("hidden");
+  orderStatusResult.replaceChildren();
+  const heading = document.createElement("h3");
+  heading.textContent = "ملخص الطلب " + String(data.orderId || "");
+  const dl = document.createElement("dl");
+  const rows = [
+    ["إجمالي الطلب", money(data.total) + " جنيه"],
+    ["المبلغ المعتمد", money(data.paid) + " جنيه"],
+    ["المبلغ قيد المراجعة", money(data.pending) + " جنيه"],
+    ["المتبقي بعد المبالغ المعتمدة", money(data.remaining) + " جنيه"],
+    ["المتاح لإرسال دفعة جديدة الآن", money(data.payableNow) + " جنيه"],
+    ["حالة السداد", String(data.paymentStatus || "غير محددة")],
+    ["حالة الطلب", String(data.status || "غير محددة")]
+  ];
+  rows.forEach(([label, value]) => {
+    const dt = document.createElement("dt"); dt.textContent = label;
+    const dd = document.createElement("dd"); dd.textContent = value;
+    dl.append(dt, dd);
   });
+  const note = document.createElement("p");
+  note.textContent = "إرسال الإيصال لا يعني اعتماده. إذا كان هناك مبلغ قيد المراجعة، انتظر مراجعة أمين المكتبة قبل إرسال إيصال آخر.";
+  orderStatusResult.append(heading, dl, note);
 }
 
-// ========================================
-// الاستعلام الآمن عن حالة الطلب
-// ========================================
+proofForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  if (isSubmitting) return;
+  const orderId = $("proofOrderId").value.trim();
+  const phone = normalizePhone($("proofPhone").value);
+  const amount = Number($("proofAmount").value);
+  const file = $("proofFile").files && $("proofFile").files[0];
 
-function displayOrderStatus(result) {
-  currentOrderStatus = result;
-
-  setText(statusOrderId, result.orderId);
-  setText(statusOrderState, result.status || "غير محددة");
-  setText(statusTotal, formatMoney(result.total));
-  setText(statusPaid, formatMoney(result.paid));
-  setText(statusPending, formatMoney(result.pending));
-  setText(statusRemaining, formatMoney(result.remaining));
-  setText(statusPaymentState, result.paymentStatus || "غير محددة");
-
-  if (orderStatusCard) orderStatusCard.hidden = false;
-
-  const closed = ["ملغي", "مرفوض", "تم الاستلام"].includes(
-    String(result.status || "").trim()
-  );
-
-  if (proofForm) {
-    proofForm.hidden = closed;
+  if (!validEgyptianPhone(phone)) {
+    setMessage(proofMessage, "أدخل رقم هاتف محمول مصري صحيح.", "status-error");
+    return;
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    setMessage(proofMessage, "أدخل مبلغًا أكبر من صفر.", "status-error");
+    return;
+  }
+  if (!file) {
+    setMessage(proofMessage, "اختر ملف الإيصال أولًا.", "status-error");
+    return;
+  }
+  if (file.size > MAX_PROOF_BYTES) {
+    setMessage(proofMessage, "حجم الملف أكبر من 5 ميجابايت. اختر ملفًا أصغر.", "status-error");
+    return;
+  }
+  const mime = String(file.type || "").toLowerCase();
+  const ext = file.name.split(".").pop().toLowerCase();
+  const validType = ["image/jpeg", "image/png", "application/pdf"].includes(mime) ||
+    ["jpg", "jpeg", "png", "pdf"].includes(ext);
+  if (!validType) {
+    setMessage(proofMessage, "نوع الملف غير مدعوم. استخدم JPG أو PNG أو PDF.", "status-error");
+    return;
   }
 
-  if (proofAmount) {
-    // المبلغ القابل للإرسال يخصم الدفعات المعلقة لتجنب تجاوز المتبقي.
-    proofAmount.max = String(
-      Math.max(0, Number(result.payableNow ?? result.remaining ?? 0))
-    );
-    proofAmount.value = "";
-    proofAmount.placeholder =
-      "المتاح للإرسال: " +
-      formatMoney(result.payableNow ?? result.remaining ?? 0) +
-      " جنيه";
+  isSubmitting = true;
+  submitProofBtn.disabled = true;
+  setMessage(proofMessage, "جارٍ تجهيز الإيصال وإرساله للمراجعة...");
+  try {
+    const base64 = await fileToBase64(file);
+    const payload = {orderId, phone, amount, fileName: file.name, mimeType: mime || mimeFromExtension(ext), base64};
+    const result = await apiPost("proof", payload);
+    if (!result || result.success !== true) throw new Error((result && (result.error || result.message)) || "لم يتم إرسال الإيصال.");
+    setMessage(proofMessage, result.message || "تم إرسال الإيصال بنجاح، وهو الآن بانتظار مراجعة أمين المكتبة.", "status-ok");
+    proofForm.reset();
+    $("lookupOrderId").value = orderId;
+    $("lookupPhone").value = phone;
+  } catch (error) {
+    setMessage(proofMessage, error.message || "تعذر إرسال الإيصال. تحقق من الاتصال وحاول لاحقًا.", "status-error");
+  } finally {
+    isSubmitting = false;
+    submitProofBtn.disabled = false;
   }
+});
 
-  if (closed) {
-    setText(orderStatusMessage, "هذا الطلب مغلق ولا يمكن إرسال دفعة جديدة له.");
-  } else if (Number(result.payableNow ?? result.remaining ?? 0) <= 0) {
-    setText(
-      orderStatusMessage,
-      "لا يوجد مبلغ إضافي متاح لإرسال إثبات جديد حاليًا. راجع حالة الدفعات المعلقة."
-    );
-    if (proofForm) proofForm.hidden = true;
-  } else {
-    setText(
-      orderStatusMessage,
-      "يمكنك إرسال إثبات التحويل. سيظل بانتظار مراجعة أمين المكتبة."
-    );
-  }
+function mimeFromExtension(ext) {
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "png") return "image/png";
+  return "image/jpeg";
 }
-
-if (orderLookupForm) {
-  orderLookupForm.addEventListener("submit", async event => {
-    event.preventDefault();
-    if (isLookingUpOrder) return;
-
-    if (!orderLookupForm.reportValidity()) return;
-
-    const orderId = lookupOrderId.value.trim();
-    const phone = normalizePhoneForDisplay(lookupPhone.value);
-
-    if (!orderId || !phone) return;
-
-    isLookingUpOrder = true;
-    if (lookupOrderBtn) {
-      lookupOrderBtn.disabled = true;
-      lookupOrderBtn.textContent = "جارٍ التحقق...";
-    }
-
-    if (orderStatusCard) orderStatusCard.hidden = true;
-    if (proofForm) proofForm.hidden = true;
-    setText(orderStatusMessage, "");
-
-    try {
-      const result = await postJson("status", {
-        orderId,
-        phone
-      });
-
-      displayOrderStatus(result);
-
-    } catch (error) {
-      setText(
-        orderStatusMessage,
-        "تعذر العثور على الطلب أو التحقق من بياناته. " +
-        "راجع رقم الطلب ورقم الهاتف ثم حاول مجددًا."
-      );
-
-      if (orderStatusCard) orderStatusCard.hidden = false;
-      console.error("خطأ استعلام الطلب:", error);
-
-    } finally {
-      isLookingUpOrder = false;
-
-      if (lookupOrderBtn) {
-        lookupOrderBtn.disabled = false;
-        lookupOrderBtn.textContent = "عرض حالة الطلب";
-      }
-    }
-  });
-}
-
-// ========================================
-// إرسال إثبات التحويل الإلكتروني
-// ========================================
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-
     reader.onload = () => {
-      const dataUrl = String(reader.result || "");
-      const comma = dataUrl.indexOf(",");
-
-      if (comma < 0) {
-        reject(new Error("تعذر قراءة الملف المختار."));
-        return;
-      }
-
-      resolve(dataUrl.slice(comma + 1));
+      const result = String(reader.result || "");
+      const comma = result.indexOf(",");
+      if (comma < 0) reject(new Error("تعذر قراءة ملف الإيصال."));
+      else resolve(result.slice(comma + 1));
     };
-
-    reader.onerror = () => {
-      reject(new Error("حدث خطأ أثناء قراءة الملف."));
-    };
-
+    reader.onerror = () => reject(new Error("تعذر قراءة ملف الإيصال."));
     reader.readAsDataURL(file);
   });
 }
 
-function validateProofFile(file) {
-  if (!file) {
-    throw new Error("اختر ملف إثبات التحويل.");
-  }
+$("paymentInfo").addEventListener("click", () => {
+  alert("يمكن إرسال إيصال التحويل من النموذج المخصص. سيظل المبلغ قيد المراجعة حتى يعتمد أمين المكتبة السداد. اعتماد دفعة موجبة يحجز كامل كميات الطلب وفق قواعد النظام.");
+});
+$("dataInfo").addEventListener("click", () => {
+  alert("تُحفظ الطلبات والمدفوعات وحركة المخزون في Google Sheets المرتبط بالنظام. هذه الواجهة لا تستبدل ملف البيانات ولا تنشئ ملفًا جديدًا.");
+});
 
-  if (file.size <= 0 || file.size > MAX_PROOF_SIZE) {
-    throw new Error("يجب ألا يتجاوز حجم الملف 5 ميجابايت.");
-  }
+window.addEventListener("beforeinstallprompt", event => {
+  event.preventDefault();
+  installPrompt = event;
+  installBtn.classList.remove("hidden");
+});
+installBtn.addEventListener("click", async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  installBtn.classList.add("hidden");
+});
+window.addEventListener("appinstalled", () => {
+  installBtn.classList.add("hidden");
+  setMessage(testStatus, "تم تثبيت 4Print على الجهاز.", "status-ok");
+});
 
-  const allowedTypes = [
-    "image/jpeg",
-    "image/png",
-    "application/pdf"
-  ];
-
-  if (!allowedTypes.includes(file.type)) {
-    throw new Error("نوع الملف غير مدعوم. اختر JPG أو PNG أو PDF.");
-  }
-
-  const name = String(file.name || "").toLowerCase();
-  const extensionAllowed = /\.(jpg|jpeg|png|pdf)$/.test(name);
-
-  if (!extensionAllowed) {
-    throw new Error("امتداد الملف غير مسموح.");
-  }
-}
-
-if (proofForm) {
-  proofForm.addEventListener("submit", async event => {
-    event.preventDefault();
-
-    if (isSubmittingProof) return;
-
-    if (!currentOrderStatus) {
-      setText(proofStatus, "استعلم عن الطلب أولًا.");
-      return;
-    }
-
-    if (!proofForm.reportValidity()) return;
-
-    const orderId = String(currentOrderStatus.orderId || "");
-    const phone = normalizePhoneForDisplay(lookupPhone.value);
-    const amount = Number(proofAmount.value);
-    const file = proofFile.files && proofFile.files[0];
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setText(proofStatus, "أدخل مبلغًا أكبر من صفر.");
-      return;
-    }
-
-    const payableNow = Number(
-      currentOrderStatus.payableNow ??
-      currentOrderStatus.remaining ??
-      0
-    );
-
-    if (amount > payableNow + 0.001) {
-      setText(
-        proofStatus,
-        "المبلغ أكبر من المتاح حاليًا. حدّث حالة الطلب قبل الإرسال."
-      );
-      return;
-    }
-
-    try {
-      validateProofFile(file);
-    } catch (error) {
-      setText(proofStatus, error.message);
-      return;
-    }
-
-    const confirmed = confirm(
-      "هل تريد إرسال إثبات التحويل بمبلغ " +
-      formatMoney(amount) +
-      " جنيه للطلب " +
-      orderId +
-      "؟\n\nسيظل الإثبات بانتظار مراجعة أمين المكتبة."
-    );
-
-    if (!confirmed) return;
-
-    isSubmittingProof = true;
-
-    if (submitProofBtn) {
-      submitProofBtn.disabled = true;
-      submitProofBtn.textContent = "جارٍ إرسال الإثبات...";
-    }
-
-    setText(
-      proofStatus,
-      "جارٍ إرسال الملف. لا تغلق الصفحة حتى تظهر نتيجة العملية."
-    );
-
-    try {
-      const base64 = await fileToBase64(file);
-
-      const result = await postJson("proof", {
-        orderId,
-        phone,
-        amount,
-        fileName: file.name,
-        mimeType: file.type,
-        base64
-      });
-
-      setText(
-        proofStatus,
-        result.message ||
-        "تم إرسال الإثبات. سيظل بانتظار مراجعة أمين المكتبة."
-      );
-
-      proofForm.reset();
-
-      // تحديث حالة الطلب من الخادم بعد إرسال الإثبات.
-      // إذا تعذر الاستعلام، نظهر نجاح الإرسال دون افتراض الاعتماد.
-      try {
-        const refreshed = await postJson("status", {
-          orderId,
-          phone
-        });
-        displayOrderStatus(refreshed);
-      } catch (refreshError) {
-        console.warn("تعذر تحديث الحالة بعد الإرسال:", refreshError);
-        setText(
-          proofStatus,
-          "تم إرسال الإثبات إلى النظام. لم يتم اعتماده تلقائيًا؛ " +
-          "يمكنك تحديث حالة الطلب لاحقًا."
-        );
-      }
-
-    } catch (error) {
-      console.error("خطأ إرسال إثبات التحويل:", error);
-
-      setText(
-        proofStatus,
-        "تعذر تأكيد إرسال الإثبات: " + error.message +
-        " تحقق من حالة الطلب قبل إعادة الإرسال لتجنب تكرار الإثبات."
-      );
-
-    } finally {
-      isSubmittingProof = false;
-
-      if (submitProofBtn) {
-        submitProofBtn.disabled = false;
-        submitProofBtn.textContent = "إرسال إثبات التحويل";
-      }
-    }
-  });
-}
-
-// ========================================
-// تثبيت التطبيق وتسجيل Service Worker
-// ========================================
-
-if (
-  "serviceWorker" in navigator &&
-  location.protocol.startsWith("http")
-) {
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", async () => {
     try {
       await navigator.serviceWorker.register("./service-worker.js");
-
-      setText(
-        testStatus,
-        "تم تسجيل Service Worker. جارٍ تحميل الخامات..."
-      );
+      setMessage(testStatus, "دعم التطبيق وتسجيل Service Worker متاحان.", "status-ok");
     } catch (error) {
-      setText(
-        testStatus,
-        "تعذر تسجيل Service Worker: " + error.message
-      );
-      console.error("خطأ تسجيل Service Worker:", error);
+      setMessage(testStatus, "تعذر تسجيل Service Worker: " + error.message, "status-warn");
     }
-
-    await loadProducts();
   });
 } else {
-  setText(testStatus, "افتح الصفحة من رابط HTTPS.");
-  loadProducts();
+  setMessage(testStatus, "التثبيت غير متاح في سياق التصفح الحالي.", "status-warn");
 }
 
-if (installBtn) {
-  window.addEventListener("beforeinstallprompt", event => {
-    event.preventDefault();
-    installPrompt = event;
-    installBtn.classList.remove("hidden");
-  });
-
-  installBtn.addEventListener("click", async () => {
-    if (!installPrompt) {
-      alert(
-        "افتح قائمة المتصفح واختر إضافة إلى الشاشة الرئيسية أو تثبيت التطبيق."
-      );
-      return;
-    }
-
-    installPrompt.prompt();
-    await installPrompt.userChoice;
-
-    installPrompt = null;
-    installBtn.classList.add("hidden");
-  });
-}
-
-// ========================================
-// استعادة بيانات آخر طلب
-// ========================================
-
-restoreLastOrder();
-
-// ========================================
-// معلومات سياسة السداد والبيانات
-// ========================================
-
-if (paymentInfo) {
-  paymentInfo.addEventListener("click", () => {
-    alert(
-      "أي دفعة موجبة معتمدة تكفي لحجز الكمية كاملة. " +
-      "إثبات التحويل لا يُعتمد تلقائيًا، بل يراجعه أمين المكتبة. " +
-      "ولا يتم تأكيد الاستلام إلا بعد اعتماد كامل المبلغ."
-    );
-  });
-}
-
-if (dataInfo) {
-  dataInfo.addEventListener("click", () => {
-    alert(
-      "تُحفظ الطلبات والمدفوعات وحركة المخزون في Google Sheets الحالي. " +
-      "يحتفظ المتصفح برقم آخر طلب لتسهيل المتابعة، ولا يخزن ملف إثبات التحويل."
-    );
-  });
-}
+loadProducts();
