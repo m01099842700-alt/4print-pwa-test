@@ -7,9 +7,14 @@
 
 let installPrompt = null;
 let isSubmitting = false;
+let isLookingUpOrder = false;
+let isSubmittingProof = false;
+let currentOrderStatus = null;
 
 const API_URL = "https://4print-api.m01099842700.workers.dev/";
 const PENDING_ORDER_KEY = "4print_pending_order_v1";
+const LAST_ORDER_KEY = "4print_last_order_v1";
+const MAX_PROOF_SIZE = 5 * 1024 * 1024;
 
 const installBtn = document.getElementById("installBtn");
 const testStatus = document.getElementById("testStatus");
@@ -27,17 +32,37 @@ const submitOrderBtn = document.getElementById("submitOrderBtn");
 const paymentInfo = document.getElementById("paymentInfo");
 const dataInfo = document.getElementById("dataInfo");
 
+const orderLookupForm = document.getElementById("orderLookupForm");
+const lookupOrderBtn = document.getElementById("lookupOrderBtn");
+const lookupOrderId = document.getElementById("lookupOrderId");
+const lookupPhone = document.getElementById("lookupPhone");
+
+const orderStatusCard = document.getElementById("orderStatusCard");
+const statusOrderId = document.getElementById("statusOrderId");
+const statusOrderState = document.getElementById("statusOrderState");
+const statusTotal = document.getElementById("statusTotal");
+const statusPaid = document.getElementById("statusPaid");
+const statusPending = document.getElementById("statusPending");
+const statusRemaining = document.getElementById("statusRemaining");
+const statusPaymentState = document.getElementById("statusPaymentState");
+const orderStatusMessage = document.getElementById("orderStatusMessage");
+
+const proofForm = document.getElementById("proofForm");
+const proofAmount = document.getElementById("proofAmount");
+const proofFile = document.getElementById("proofFile");
+const submitProofBtn = document.getElementById("submitProofBtn");
+const proofStatus = document.getElementById("proofStatus");
+
 let products = [];
 const quantities = Object.create(null);
 
 // ========================================
-// إدارة محاولة الحجز المحفوظة
+// طلبات محفوظة محليًا
 // ========================================
 
 function getPendingOrder() {
   try {
     const raw = localStorage.getItem(PENDING_ORDER_KEY);
-
     if (!raw) return null;
 
     const pending = JSON.parse(raw);
@@ -48,13 +73,12 @@ function getPendingOrder() {
       !pending.payload ||
       !Array.isArray(pending.payload.items)
     ) {
-      throw new Error("بيانات الحجز المحفوظة غير مكتملة.");
+      return null;
     }
 
     return pending;
-
   } catch (error) {
-    console.error("تعذر قراءة الحجز المحفوظ:", error);
+    console.error("تعذر قراءة محاولة الحجز:", error);
     return null;
   }
 }
@@ -77,7 +101,7 @@ function createIdempotencyKey() {
   }
 
   throw new Error(
-    "تعذر إنشاء مفتاح آمن للحجز. افتح التطبيق عبر رابط HTTPS."
+    "تعذر إنشاء مفتاح آمن. افتح التطبيق عبر رابط HTTPS."
   );
 }
 
@@ -99,23 +123,60 @@ function clearPendingOrder(idempotencyKey) {
   }
 }
 
+function saveLastOrder(order) {
+  // نحفظ معلومات مختصرة للرجوع إليها؛ لا نحفظ أي ملف إثبات هنا.
+  localStorage.setItem(
+    LAST_ORDER_KEY,
+    JSON.stringify({
+      orderId: String(order.orderId || ""),
+      phone: String(order.phone || ""),
+      total: Number(order.total || 0),
+      savedAt: new Date().toISOString()
+    })
+  );
+}
+
+function getLastOrder() {
+  try {
+    const raw = localStorage.getItem(LAST_ORDER_KEY);
+    if (!raw) return null;
+
+    const order = JSON.parse(raw);
+
+    if (!order || !order.orderId || !order.phone) {
+      return null;
+    }
+
+    return order;
+  } catch (error) {
+    console.error("تعذر قراءة آخر طلب:", error);
+    return null;
+  }
+}
+
+function restoreLastOrder() {
+  const order = getLastOrder();
+  if (!order) return;
+
+  if (lookupOrderId) {
+    lookupOrderId.value = order.orderId;
+  }
+
+  if (lookupPhone) {
+    lookupPhone.value = order.phone;
+  }
+}
+
 function restorePendingOrder() {
   const pending = getPendingOrder();
-
   if (!pending) return false;
 
   const payload = pending.payload;
-
   const nameInput = document.getElementById("studentName");
   const phoneInput = document.getElementById("studentPhone");
 
-  if (nameInput) {
-    nameInput.value = payload.name || "";
-  }
-
-  if (phoneInput) {
-    phoneInput.value = payload.phone || "";
-  }
+  if (nameInput) nameInput.value = payload.name || "";
+  if (phoneInput) phoneInput.value = payload.phone || "";
 
   Object.keys(quantities).forEach(code => {
     quantities[code] = 0;
@@ -131,17 +192,56 @@ function restorePendingOrder() {
 }
 
 // ========================================
-// تنسيق الأسعار
+// أدوات عامة
 // ========================================
 
 function formatMoney(value) {
   return Number(value || 0).toLocaleString("ar-EG", {
+    minimumFractionDigits: 0,
     maximumFractionDigits: 2
   });
 }
 
+function setText(element, value) {
+  if (element) {
+    element.textContent = value == null ? "" : String(value);
+  }
+}
+
+function normalizePhoneForDisplay(value) {
+  return String(value || "").replace(/\s+/g, "");
+}
+
+async function postJson(api, payload) {
+  const response = await fetch(API_URL + "?api=" + encodeURIComponent(api), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store"
+  });
+
+  let result;
+  try {
+    result = await response.json();
+  } catch (error) {
+    throw new Error(
+      "تعذر قراءة رد النظام. لا تعاود إرسال عملية غير مؤكدة قبل مراجعة حالتها."
+    );
+  }
+
+  if (!response.ok || !result || result.success !== true) {
+    throw new Error(
+      result?.error || result?.message || "لم ينجح الطلب."
+    );
+  }
+
+  return result;
+}
+
 // ========================================
-// تحديث ملخص الحجز
+// ملخص الاختيار
 // ========================================
 
 function updateSummary() {
@@ -149,7 +249,7 @@ function updateSummary() {
   let total = 0;
 
   products.forEach(product => {
-    const quantity = quantities[product.code] || 0;
+    const quantity = Number(quantities[product.code] || 0);
 
     if (quantity > 0) {
       count++;
@@ -157,13 +257,8 @@ function updateSummary() {
     }
   });
 
-  if (selectedCount) {
-    selectedCount.textContent = count;
-  }
-
-  if (orderTotal) {
-    orderTotal.textContent = formatMoney(total);
-  }
+  setText(selectedCount, count);
+  setText(orderTotal, formatMoney(total));
 }
 
 // ========================================
@@ -176,11 +271,7 @@ function renderProducts() {
   productsList.replaceChildren();
 
   if (!products.length) {
-    if (productsStatus) {
-      productsStatus.textContent =
-        "لا توجد خامات لعرضها حاليًا.";
-    }
-
+    setText(productsStatus, "لا توجد خامات لعرضها حاليًا.");
     return;
   }
 
@@ -193,28 +284,21 @@ function renderProducts() {
     name.textContent = product.name || "خامة دون اسم";
 
     const code = document.createElement("p");
-    code.textContent =
-      "كود الخامة: " + (product.code || "—");
+    code.textContent = "كود الخامة: " + (product.code || "—");
 
     const price = document.createElement("p");
     price.textContent =
       "السعر: " + formatMoney(product.price) + " جنيه";
 
     const unit = document.createElement("p");
-    unit.textContent =
-      "الوحدة: " + (product.unit || "—");
+    unit.textContent = "الوحدة: " + (product.unit || "—");
 
-    const stock = Math.max(
-      0,
-      Number(product.stock) || 0
-    );
+    const stock = Math.max(0, Number(product.stock) || 0);
 
     const stockText = document.createElement("p");
-    stockText.textContent =
-      "الكمية المتاحة: " + stock;
+    stockText.textContent = "الكمية المتاحة: " + stock;
 
     const controls = document.createElement("div");
-
     controls.style.display = "flex";
     controls.style.alignItems = "center";
     controls.style.gap = "12px";
@@ -224,16 +308,10 @@ function renderProducts() {
     minus.type = "button";
     minus.className = "secondary";
     minus.textContent = "−";
-
-    minus.setAttribute(
-      "aria-label",
-      "تقليل كمية " + product.name
-    );
+    minus.setAttribute("aria-label", "تقليل كمية " + product.name);
 
     const quantityText = document.createElement("strong");
-    quantityText.textContent =
-      quantities[product.code] || 0;
-
+    quantityText.textContent = quantities[product.code] || 0;
     quantityText.style.minWidth = "24px";
     quantityText.style.textAlign = "center";
 
@@ -241,18 +319,13 @@ function renderProducts() {
     plus.type = "button";
     plus.className = "secondary";
     plus.textContent = "+";
-
-    plus.setAttribute(
-      "aria-label",
-      "زيادة كمية " + product.name
-    );
+    plus.setAttribute("aria-label", "زيادة كمية " + product.name);
 
     plus.disabled =
       stock <= 0 ||
       (quantities[product.code] || 0) >= stock;
 
-    minus.disabled =
-      !(quantities[product.code] > 0);
+    minus.disabled = !(quantities[product.code] > 0);
 
     minus.addEventListener("click", () => {
       quantities[product.code] = Math.max(
@@ -269,74 +342,36 @@ function renderProducts() {
 
       if (current < stock) {
         quantities[product.code] = current + 1;
-
         renderProducts();
         updateSummary();
       }
     });
 
     controls.append(minus, quantityText, plus);
-
-    card.append(
-      name,
-      code,
-      price,
-      unit,
-      stockText,
-      controls
-    );
-
+    card.append(name, code, price, unit, stockText, controls);
     productsList.appendChild(card);
   });
 
-  if (productsStatus) {
-    productsStatus.textContent =
-      "تم تحميل " + products.length + " خامة بنجاح.";
-  }
+  setText(
+    productsStatus,
+    "تم تحميل " + products.length + " خامة بنجاح."
+  );
 }
 
 // ========================================
-// حالة نموذج الحجز
+// تحميل الخامات
 // ========================================
-
-function setBookingReady() {
-  if (bookingStatus) {
-    bookingStatus.textContent =
-      "النظام جاهز. اختر الخامات وأدخل بياناتك لإرسال طلب الحجز.";
-  }
-
-  if (submitOrderBtn) {
-    submitOrderBtn.disabled = false;
-  }
-}
 
 function setBookingUnavailable(message) {
-  if (bookingStatus) {
-    bookingStatus.textContent = message;
-  }
-
-  if (submitOrderBtn) {
-    submitOrderBtn.disabled = true;
-  }
+  setText(bookingStatus, message);
+  if (submitOrderBtn) submitOrderBtn.disabled = true;
 }
 
-// ========================================
-// تحميل الخامات من النظام الفعلي
-// ========================================
-
 async function loadProducts() {
-  if (productsStatus) {
-    productsStatus.textContent = "جارٍ تحميل الخامات...";
-  }
+  setText(productsStatus, "جارٍ تحميل الخامات...");
+  setText(connectionNotice, "جارٍ الاتصال بنظام الخامات...");
 
-  if (connectionNotice) {
-    connectionNotice.textContent =
-      "جارٍ الاتصال بنظام الخامات...";
-  }
-
-  if (submitOrderBtn) {
-    submitOrderBtn.disabled = true;
-  }
+  if (submitOrderBtn) submitOrderBtn.disabled = true;
 
   try {
     const response = await fetch(API_URL, {
@@ -355,43 +390,41 @@ async function loadProducts() {
       data.success !== true ||
       !Array.isArray(data.products)
     ) {
-      throw new Error(
-        data?.error || "استجابة غير صحيحة من النظام."
-      );
+      throw new Error(data?.error || "استجابة الخامات غير صحيحة.");
     }
 
     products = data.products;
+    window.fourPrintProducts = products;
 
     const hasPendingOrder = restorePendingOrder();
 
-    window.fourPrintProducts = products;
-
     renderProducts();
     updateSummary();
-    setBookingReady();
 
-    if (hasPendingOrder && bookingStatus) {
-      bookingStatus.textContent =
+    if (submitOrderBtn) submitOrderBtn.disabled = false;
+
+    if (hasPendingOrder) {
+      setText(
+        bookingStatus,
         "توجد محاولة حجز سابقة لم تُحسم نتيجتها. " +
-        "إعادة المحاولة سترسل بيانات الحجز المحفوظة نفسها.";
+        "إعادة المحاولة سترسل بيانات المحاولة نفسها."
+      );
+    } else {
+      setText(
+        bookingStatus,
+        "النظام جاهز. اختر الخامات وأدخل بياناتك لإرسال طلب الحجز."
+      );
     }
 
-    if (connectionNotice) {
-      connectionNotice.textContent =
-        "تم الاتصال بنظام الخامات بنجاح.";
-    }
+    setText(connectionNotice, "تم الاتصال بنظام الخامات بنجاح.");
 
   } catch (error) {
     console.error("خطأ تحميل الخامات:", error);
-
-    if (productsStatus) {
-      productsStatus.textContent = "تعذر تحميل الخامات.";
-    }
-
-    if (connectionNotice) {
-      connectionNotice.textContent =
-        "تعذر الاتصال بالنظام. حدّث الصفحة وحاول مرة أخرى.";
-    }
+    setText(productsStatus, "تعذر تحميل الخامات.");
+    setText(
+      connectionNotice,
+      "تعذر الاتصال بالنظام. حدّث الصفحة وحاول مرة أخرى."
+    );
 
     setBookingUnavailable(
       "لم يتم تحميل الخامات. لن تتمكن من إرسال حجز حتى نجاح الاتصال."
@@ -404,207 +437,455 @@ async function loadProducts() {
 // ========================================
 
 if (bookingForm) {
-  bookingForm.addEventListener(
-    "submit",
-    async function(event) {
-      event.preventDefault();
+  bookingForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (isSubmitting) return;
 
-      if (isSubmitting) return;
+    if (!products.length) {
+      setBookingUnavailable(
+        "الخامات غير محمّلة. حدّث الصفحة وحاول مرة أخرى."
+      );
+      return;
+    }
 
-      if (!products.length) {
-        setBookingUnavailable(
-          "الخامات غير محمّلة. حدّث الصفحة وحاول مرة أخرى."
-        );
+    let pending = getPendingOrder();
+    let payload;
 
+    if (pending) {
+      const retry = confirm(
+        "توجد محاولة حجز سابقة لم تُحسم نتيجتها.\n\n" +
+        "سيعيد النظام إرسال بيانات الحجز السابقة نفسها، " +
+        "ولن يرسل الاختيارات الحالية كحجز جديد.\n\n" +
+        "هل تريد إعادة المحاولة؟"
+      );
+
+      if (!retry) return;
+      payload = pending.payload;
+
+    } else {
+      if (!bookingForm.reportValidity()) return;
+
+      const name =
+        document.getElementById("studentName")?.value.trim() || "";
+      const phone =
+        document.getElementById("studentPhone")?.value.trim() || "";
+
+      const items = products
+        .filter(product => (quantities[product.code] || 0) > 0)
+        .map(product => ({
+          code: product.code,
+          quantity: Number(quantities[product.code])
+        }));
+
+      if (!name || !phone) {
+        setText(bookingStatus, "يرجى إدخال الاسم الرباعي ورقم الهاتف.");
         return;
       }
 
-      let pending = getPendingOrder();
-      let payload;
-
-      // إعادة المحاولة باستخدام البيانات والمفتاح نفسيهما.
-      if (pending) {
-        const retry = confirm(
-          "توجد محاولة حجز سابقة لم تُحسم نتيجتها.\n\n" +
-          "سيعيد النظام إرسال الحجز السابق نفسه، " +
-          "ولن يرسل الاختيارات الحالية كحجز جديد.\n\n" +
-          "هل تريد إعادة المحاولة؟"
-        );
-
-        if (!retry) return;
-
-        payload = pending.payload;
-
-      } else {
-        if (!bookingForm.reportValidity()) return;
-
-        const name =
-          document.getElementById("studentName")?.value.trim() || "";
-
-        const phone =
-          document.getElementById("studentPhone")?.value.trim() || "";
-
-        const items = products
-          .filter(product => (quantities[product.code] || 0) > 0)
-          .map(product => ({
-            code: product.code,
-            quantity: quantities[product.code]
-          }));
-
-        if (!name || !phone) {
-          if (bookingStatus) {
-            bookingStatus.textContent =
-              "يرجى إدخال الاسم الرباعي ورقم الهاتف.";
-          }
-
-          return;
-        }
-
-        if (!items.length) {
-          if (bookingStatus) {
-            bookingStatus.textContent =
-              "يرجى اختيار خامة واحدة على الأقل.";
-          }
-
-          return;
-        }
-
-        if (!confirm(
-          "هل تريد إرسال طلب الحجز؟ تأكد من الاسم والخامات والكميات قبل المتابعة."
-        )) {
-          return;
-        }
-
-        let idempotencyKey;
-
-        try {
-          idempotencyKey = createIdempotencyKey();
-        } catch (error) {
-          if (bookingStatus) {
-            bookingStatus.textContent = error.message;
-          }
-
-          return;
-        }
-
-        payload = {
-          name: name,
-          phone: phone,
-          items: items,
-          idempotencyKey: idempotencyKey
-        };
-
-        pending = {
-          idempotencyKey: idempotencyKey,
-          payload: payload
-        };
-
-        try {
-          // حفظ بيانات المحاولة قبل الاتصال بالخادم.
-          savePendingOrder(pending);
-
-        } catch (error) {
-          console.error("تعذر حفظ الحجز محليًا:", error);
-
-          if (bookingStatus) {
-            bookingStatus.textContent =
-              "تعذر حفظ بيانات الحجز على هذا الجهاز؛ " +
-              "لم يتم إرسال الطلب. تحقق من إعدادات المتصفح.";
-          }
-
-          return;
-        }
+      if (!items.length) {
+        setText(bookingStatus, "يرجى اختيار خامة واحدة على الأقل.");
+        return;
       }
 
-      isSubmitting = true;
-
-      if (submitOrderBtn) {
-        submitOrderBtn.disabled = true;
-        submitOrderBtn.textContent = "جارٍ إرسال الطلب...";
+      if (!confirm(
+        "هل تريد إرسال طلب الحجز؟ تأكد من الاسم والخامات والكميات قبل المتابعة."
+      )) {
+        return;
       }
 
-      if (bookingStatus) {
-        bookingStatus.textContent =
-          "جارٍ إرسال الحجز والتحقق من نتيجته. يرجى الانتظار.";
+      let idempotencyKey;
+      try {
+        idempotencyKey = createIdempotencyKey();
+      } catch (error) {
+        setText(bookingStatus, error.message);
+        return;
       }
+
+      payload = {
+        name,
+        phone,
+        items,
+        idempotencyKey
+      };
+
+      pending = {
+        idempotencyKey,
+        payload
+      };
 
       try {
-        const response = await fetch(API_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(payload)
-        });
-
-        const result = await response.json();
-
-        if (
-          !response.ok ||
-          !result ||
-          result.success !== true
-        ) {
-          throw new Error(
-            result?.error ||
-            result?.message ||
-            "لم يؤكد النظام تسجيل الطلب."
-          );
-        }
-
-        // إزالة المحاولة المحفوظة بعد تأكيد نجاح الخادم.
-        clearPendingOrder(pending.idempotencyKey);
-
-        bookingForm.reset();
-
-        Object.keys(quantities).forEach(code => {
-          quantities[code] = 0;
-        });
-
-        // تحديث المخزون أولًا، ثم عرض رسالة النجاح.
-        await loadProducts();
-
-        if (bookingStatus) {
-          bookingStatus.textContent =
-            "تم تأكيد الحجز بنجاح. رقم الطلب: " +
-            (result.orderId || "غير متاح") +
-            " — الإجمالي: " +
-            formatMoney(result.total) +
-            " جنيه." +
-            (
-              result.duplicate
-                ? " تم العثور على الحجز السابق ولم يُنشأ حجز مكرر."
-                : " احتفظ برقم الطلب."
-            );
-        }
-
+        savePendingOrder(pending);
       } catch (error) {
-        console.error("نتيجة إرسال طلب 4Print:", error);
-
-        if (bookingStatus) {
-          bookingStatus.textContent =
-            "لم نتمكن من التأكد من نتيجة الحجز. " +
-            "احتفظ بالصفحة ولا تحذف بيانات المتصفح. " +
-            "يمكنك إعادة المحاولة لإرسال الطلب المحفوظ نفسه. " +
-            "التفاصيل: " + error.message;
-        }
-
-        // لا تحذف المحاولة عند غموض النتيجة؛
-        // فقد يكون الخادم قد سجل الطلب بالفعل.
-
-      } finally {
-        isSubmitting = false;
-
-        if (submitOrderBtn) {
-          submitOrderBtn.textContent = "إرسال طلب الحجز";
-          submitOrderBtn.disabled = products.length === 0;
-        }
+        console.error("تعذر حفظ محاولة الحجز:", error);
+        setText(
+          bookingStatus,
+          "تعذر حفظ محاولة الحجز على هذا الجهاز؛ لم يتم إرسال الطلب."
+        );
+        return;
       }
     }
-  );
+
+    isSubmitting = true;
+
+    if (submitOrderBtn) {
+      submitOrderBtn.disabled = true;
+      submitOrderBtn.textContent = "جارٍ إرسال الطلب...";
+    }
+
+    setText(
+      bookingStatus,
+      "جارٍ إرسال الحجز والتحقق من نتيجته. يرجى الانتظار."
+    );
+
+    try {
+      const result = await postJson("order", payload);
+
+      if (!result.orderId) {
+        throw new Error(
+          "لم يتضمن رد النظام رقم الطلب؛ احتفظ بمحاولة الحجز ولا تنشئ طلبًا جديدًا."
+        );
+      }
+
+      // حفظ رقم الطلب والهاتف للرجوع إلى متابعة السداد.
+      saveLastOrder({
+        orderId: result.orderId,
+        phone: payload.phone,
+        total: result.total
+      });
+
+      clearPendingOrder(pending.idempotencyKey);
+
+      bookingForm.reset();
+      Object.keys(quantities).forEach(code => {
+        quantities[code] = 0;
+      });
+
+      await loadProducts();
+
+      setText(
+        bookingStatus,
+        "تم تأكيد الحجز بنجاح. رقم الطلب: " +
+        result.orderId +
+        " — الإجمالي: " +
+        formatMoney(result.total) +
+        " جنيه. احتفظ برقم الطلب، ويمكنك متابعة السداد أدناه."
+      );
+
+      restoreLastOrder();
+
+      if (orderStatusCard) orderStatusCard.hidden = true;
+      if (proofForm) proofForm.hidden = true;
+
+      document.getElementById("orderFollowSection")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+
+    } catch (error) {
+      console.error("نتيجة إرسال طلب 4Print:", error);
+
+      setText(
+        bookingStatus,
+        "لم نتمكن من التأكد من نتيجة الحجز. لا تنشئ طلبًا جديدًا. " +
+        "يمكنك إعادة المحاولة لإرسال المحاولة المحفوظة نفسها. " +
+        "التفاصيل: " + error.message
+      );
+
+    } finally {
+      isSubmitting = false;
+
+      if (submitOrderBtn) {
+        submitOrderBtn.textContent = "إرسال طلب الحجز";
+        submitOrderBtn.disabled = products.length === 0;
+      }
+    }
+  });
 }
 
 // ========================================
-// تثبيت التطبيق على الجهاز
+// الاستعلام الآمن عن حالة الطلب
+// ========================================
+
+function displayOrderStatus(result) {
+  currentOrderStatus = result;
+
+  setText(statusOrderId, result.orderId);
+  setText(statusOrderState, result.status || "غير محددة");
+  setText(statusTotal, formatMoney(result.total));
+  setText(statusPaid, formatMoney(result.paid));
+  setText(statusPending, formatMoney(result.pending));
+  setText(statusRemaining, formatMoney(result.remaining));
+  setText(statusPaymentState, result.paymentStatus || "غير محددة");
+
+  if (orderStatusCard) orderStatusCard.hidden = false;
+
+  const closed = ["ملغي", "مرفوض", "تم الاستلام"].includes(
+    String(result.status || "").trim()
+  );
+
+  if (proofForm) {
+    proofForm.hidden = closed;
+  }
+
+  if (proofAmount) {
+    // المبلغ القابل للإرسال يخصم الدفعات المعلقة لتجنب تجاوز المتبقي.
+    proofAmount.max = String(
+      Math.max(0, Number(result.payableNow ?? result.remaining ?? 0))
+    );
+    proofAmount.value = "";
+    proofAmount.placeholder =
+      "المتاح للإرسال: " +
+      formatMoney(result.payableNow ?? result.remaining ?? 0) +
+      " جنيه";
+  }
+
+  if (closed) {
+    setText(orderStatusMessage, "هذا الطلب مغلق ولا يمكن إرسال دفعة جديدة له.");
+  } else if (Number(result.payableNow ?? result.remaining ?? 0) <= 0) {
+    setText(
+      orderStatusMessage,
+      "لا يوجد مبلغ إضافي متاح لإرسال إثبات جديد حاليًا. راجع حالة الدفعات المعلقة."
+    );
+    if (proofForm) proofForm.hidden = true;
+  } else {
+    setText(
+      orderStatusMessage,
+      "يمكنك إرسال إثبات التحويل. سيظل بانتظار مراجعة أمين المكتبة."
+    );
+  }
+}
+
+if (orderLookupForm) {
+  orderLookupForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (isLookingUpOrder) return;
+
+    if (!orderLookupForm.reportValidity()) return;
+
+    const orderId = lookupOrderId.value.trim();
+    const phone = normalizePhoneForDisplay(lookupPhone.value);
+
+    if (!orderId || !phone) return;
+
+    isLookingUpOrder = true;
+    if (lookupOrderBtn) {
+      lookupOrderBtn.disabled = true;
+      lookupOrderBtn.textContent = "جارٍ التحقق...";
+    }
+
+    if (orderStatusCard) orderStatusCard.hidden = true;
+    if (proofForm) proofForm.hidden = true;
+    setText(orderStatusMessage, "");
+
+    try {
+      const result = await postJson("status", {
+        orderId,
+        phone
+      });
+
+      displayOrderStatus(result);
+
+    } catch (error) {
+      setText(
+        orderStatusMessage,
+        "تعذر العثور على الطلب أو التحقق من بياناته. " +
+        "راجع رقم الطلب ورقم الهاتف ثم حاول مجددًا."
+      );
+
+      if (orderStatusCard) orderStatusCard.hidden = false;
+      console.error("خطأ استعلام الطلب:", error);
+
+    } finally {
+      isLookingUpOrder = false;
+
+      if (lookupOrderBtn) {
+        lookupOrderBtn.disabled = false;
+        lookupOrderBtn.textContent = "عرض حالة الطلب";
+      }
+    }
+  });
+}
+
+// ========================================
+// إرسال إثبات التحويل الإلكتروني
+// ========================================
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      const comma = dataUrl.indexOf(",");
+
+      if (comma < 0) {
+        reject(new Error("تعذر قراءة الملف المختار."));
+        return;
+      }
+
+      resolve(dataUrl.slice(comma + 1));
+    };
+
+    reader.onerror = () => {
+      reject(new Error("حدث خطأ أثناء قراءة الملف."));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+function validateProofFile(file) {
+  if (!file) {
+    throw new Error("اختر ملف إثبات التحويل.");
+  }
+
+  if (file.size <= 0 || file.size > MAX_PROOF_SIZE) {
+    throw new Error("يجب ألا يتجاوز حجم الملف 5 ميجابايت.");
+  }
+
+  const allowedTypes = [
+    "image/jpeg",
+    "image/png",
+    "application/pdf"
+  ];
+
+  if (!allowedTypes.includes(file.type)) {
+    throw new Error("نوع الملف غير مدعوم. اختر JPG أو PNG أو PDF.");
+  }
+
+  const name = String(file.name || "").toLowerCase();
+  const extensionAllowed = /\.(jpg|jpeg|png|pdf)$/.test(name);
+
+  if (!extensionAllowed) {
+    throw new Error("امتداد الملف غير مسموح.");
+  }
+}
+
+if (proofForm) {
+  proofForm.addEventListener("submit", async event => {
+    event.preventDefault();
+
+    if (isSubmittingProof) return;
+
+    if (!currentOrderStatus) {
+      setText(proofStatus, "استعلم عن الطلب أولًا.");
+      return;
+    }
+
+    if (!proofForm.reportValidity()) return;
+
+    const orderId = String(currentOrderStatus.orderId || "");
+    const phone = normalizePhoneForDisplay(lookupPhone.value);
+    const amount = Number(proofAmount.value);
+    const file = proofFile.files && proofFile.files[0];
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setText(proofStatus, "أدخل مبلغًا أكبر من صفر.");
+      return;
+    }
+
+    const payableNow = Number(
+      currentOrderStatus.payableNow ??
+      currentOrderStatus.remaining ??
+      0
+    );
+
+    if (amount > payableNow + 0.001) {
+      setText(
+        proofStatus,
+        "المبلغ أكبر من المتاح حاليًا. حدّث حالة الطلب قبل الإرسال."
+      );
+      return;
+    }
+
+    try {
+      validateProofFile(file);
+    } catch (error) {
+      setText(proofStatus, error.message);
+      return;
+    }
+
+    const confirmed = confirm(
+      "هل تريد إرسال إثبات التحويل بمبلغ " +
+      formatMoney(amount) +
+      " جنيه للطلب " +
+      orderId +
+      "؟\n\nسيظل الإثبات بانتظار مراجعة أمين المكتبة."
+    );
+
+    if (!confirmed) return;
+
+    isSubmittingProof = true;
+
+    if (submitProofBtn) {
+      submitProofBtn.disabled = true;
+      submitProofBtn.textContent = "جارٍ إرسال الإثبات...";
+    }
+
+    setText(
+      proofStatus,
+      "جارٍ إرسال الملف. لا تغلق الصفحة حتى تظهر نتيجة العملية."
+    );
+
+    try {
+      const base64 = await fileToBase64(file);
+
+      const result = await postJson("proof", {
+        orderId,
+        phone,
+        amount,
+        fileName: file.name,
+        mimeType: file.type,
+        base64
+      });
+
+      setText(
+        proofStatus,
+        result.message ||
+        "تم إرسال الإثبات. سيظل بانتظار مراجعة أمين المكتبة."
+      );
+
+      proofForm.reset();
+
+      // تحديث حالة الطلب من الخادم بعد إرسال الإثبات.
+      // إذا تعذر الاستعلام، نظهر نجاح الإرسال دون افتراض الاعتماد.
+      try {
+        const refreshed = await postJson("status", {
+          orderId,
+          phone
+        });
+        displayOrderStatus(refreshed);
+      } catch (refreshError) {
+        console.warn("تعذر تحديث الحالة بعد الإرسال:", refreshError);
+        setText(
+          proofStatus,
+          "تم إرسال الإثبات إلى النظام. لم يتم اعتماده تلقائيًا؛ " +
+          "يمكنك تحديث حالة الطلب لاحقًا."
+        );
+      }
+
+    } catch (error) {
+      console.error("خطأ إرسال إثبات التحويل:", error);
+
+      setText(
+        proofStatus,
+        "تعذر تأكيد إرسال الإثبات: " + error.message +
+        " تحقق من حالة الطلب قبل إعادة الإرسال لتجنب تكرار الإثبات."
+      );
+
+    } finally {
+      isSubmittingProof = false;
+
+      if (submitProofBtn) {
+        submitProofBtn.disabled = false;
+        submitProofBtn.textContent = "إرسال إثبات التحويل";
+      }
+    }
+  });
+}
+
+// ========================================
+// تثبيت التطبيق وتسجيل Service Worker
 // ========================================
 
 if (
@@ -613,83 +894,66 @@ if (
 ) {
   window.addEventListener("load", async () => {
     try {
-      await navigator.serviceWorker.register(
-        "./service-worker.js"
+      await navigator.serviceWorker.register("./service-worker.js");
+
+      setText(
+        testStatus,
+        "تم تسجيل Service Worker. جارٍ تحميل الخامات..."
       );
-
-      if (testStatus) {
-        testStatus.textContent =
-          "تم تسجيل Service Worker. جارٍ تحميل الخامات...";
-      }
-
     } catch (error) {
-      if (testStatus) {
-        testStatus.textContent =
-          "تعذر تسجيل Service Worker: " + error.message;
-      }
-
-      console.error(
-        "خطأ تسجيل Service Worker:",
-        error
+      setText(
+        testStatus,
+        "تعذر تسجيل Service Worker: " + error.message
       );
+      console.error("خطأ تسجيل Service Worker:", error);
     }
 
     await loadProducts();
   });
-
 } else {
-  if (testStatus) {
-    testStatus.textContent =
-      "افتح الصفحة من رابط HTTPS.";
-  }
-
+  setText(testStatus, "افتح الصفحة من رابط HTTPS.");
   loadProducts();
 }
 
-// ========================================
-// زر تثبيت التطبيق
-// ========================================
-
 if (installBtn) {
-  window.addEventListener(
-    "beforeinstallprompt",
-    event => {
-      event.preventDefault();
-      installPrompt = event;
-      installBtn.classList.remove("hidden");
+  window.addEventListener("beforeinstallprompt", event => {
+    event.preventDefault();
+    installPrompt = event;
+    installBtn.classList.remove("hidden");
+  });
+
+  installBtn.addEventListener("click", async () => {
+    if (!installPrompt) {
+      alert(
+        "افتح قائمة المتصفح واختر إضافة إلى الشاشة الرئيسية أو تثبيت التطبيق."
+      );
+      return;
     }
-  );
 
-  installBtn.addEventListener(
-    "click",
-    async () => {
-      if (!installPrompt) {
-        alert(
-          "افتح قائمة المتصفح واختر إضافة إلى الشاشة الرئيسية أو تثبيت التطبيق."
-        );
+    installPrompt.prompt();
+    await installPrompt.userChoice;
 
-        return;
-      }
-
-      installPrompt.prompt();
-
-      await installPrompt.userChoice;
-
-      installPrompt = null;
-      installBtn.classList.add("hidden");
-    }
-  );
+    installPrompt = null;
+    installBtn.classList.add("hidden");
+  });
 }
 
 // ========================================
-// معلومات سياسة السداد والاستلام
+// استعادة بيانات آخر طلب
+// ========================================
+
+restoreLastOrder();
+
+// ========================================
+// معلومات سياسة السداد والبيانات
 // ========================================
 
 if (paymentInfo) {
   paymentInfo.addEventListener("click", () => {
     alert(
-      "أي سداد موجب بعد اعتماده يحجز الكمية كاملة، " +
-      "والاستلام لا يُؤكّد إلا بعد اعتماد كامل المبلغ."
+      "أي دفعة موجبة معتمدة تكفي لحجز الكمية كاملة. " +
+      "إثبات التحويل لا يُعتمد تلقائيًا، بل يراجعه أمين المكتبة. " +
+      "ولا يتم تأكيد الاستلام إلا بعد اعتماد كامل المبلغ."
     );
   });
 }
@@ -697,9 +961,8 @@ if (paymentInfo) {
 if (dataInfo) {
   dataInfo.addEventListener("click", () => {
     alert(
-      "تُحمّل الخامات من النظام الفعلي. " +
-      "لا يُسجّل الحجز بمجرد اختيار الخامات؛ " +
-      "يجب إرسال الطلب وتلقي تأكيد من النظام."
+      "تُحفظ الطلبات والمدفوعات وحركة المخزون في Google Sheets الحالي. " +
+      "يحتفظ المتصفح برقم آخر طلب لتسهيل المتابعة، ولا يخزن ملف إثبات التحويل."
     );
   });
 }
