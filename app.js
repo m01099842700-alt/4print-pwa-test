@@ -239,16 +239,53 @@ bookingForm.addEventListener("submit", async event => {
     return;
   }
 
-  let pending;
-  try { pending = JSON.parse(localStorage.getItem(PENDING_ORDER_KEY) || "null"); } catch (_) {}
-  if (pending && pending.idempotencyKey) {
-    setMessage(bookingStatus, "يوجد إرسال سابق لم يُحسم بعد. سنعيد إرسال نفس الطلب للتحقق من نتيجته بدل إنشاء محاولة جديدة.", "status-warn");
-    pending.name = name;
-    pending.phone = phone;
-    pending.items = items;
-  } else {
-    pending = {name, phone, items, idempotencyKey: makeIdempotencyKey(), createdAt: Date.now()};
+  
+let pending;
+
+try {
+  pending = JSON.parse(localStorage.getItem(PENDING_ORDER_KEY) || "null");
+} catch (_) {
+  setMessage(
+    bookingStatus,
+    "تعذر قراءة محاولة الحجز السابقة. لا تبدأ حجزًا جديدًا قبل مراجعة الحالة.",
+    "status-error"
+  );
+  return;
+}
+
+if (pending !== null) {
+  if (
+    !pending ||
+    typeof pending !== "object" ||
+    typeof pending.idempotencyKey !== "string" ||
+    !pending.idempotencyKey ||
+    typeof pending.name !== "string" ||
+    typeof pending.phone !== "string" ||
+    !Array.isArray(pending.items) ||
+    pending.items.length === 0
+  ) {
+    setMessage(
+      bookingStatus,
+      "توجد محاولة حجز محفوظة لكن بياناتها غير مكتملة. لا تمسحها ولا تبدأ طلبًا جديدًا؛ راجع المحاولة السابقة أولًا.",
+      "status-error"
+    );
+    return;
   }
+
+  setMessage(
+    bookingStatus,
+    "توجد محاولة حجز سابقة لم تُحسم نتيجتها. ستتم إعادة إرسال بياناتها الأصلية دون تغيير.",
+    "status-warn"
+  );
+} else {
+  pending = {
+    name,
+    phone,
+    items,
+    idempotencyKey: makeIdempotencyKey(),
+    createdAt: Date.now()
+  };
+}
 
   isSubmitting = true;
   submitOrderBtn.disabled = true;
