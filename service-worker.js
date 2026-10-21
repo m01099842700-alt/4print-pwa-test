@@ -1,10 +1,14 @@
-const CACHE_NAME = "4print-shell-v5";
+const CACHE_NAME = "4print-shell-v6";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
-  "./manifest.json"
+  "./manifest.json",
+  "./4print-logo-master.png",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./apple-touch-icon.png"
 ];
 
 self.addEventListener("install", event => {
