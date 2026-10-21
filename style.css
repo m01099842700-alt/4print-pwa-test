@@ -49,5 +49,6 @@ button:disabled{opacity:.55;cursor:not-allowed}
 .status-warn{color:#8b6411!important}
 button:focus-visible{outline:3px solid #f0c75e;outline-offset:2px}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:18px 0}
+.signature{margin-top:5px;color:var(--navy);font-weight:700;font-size:14px}
 @media(max-width:480px){.brand-logo{width:60px;height:60px}.brand h1{font-size:19px}.product{grid-template-columns:minmax(0,1fr)}.product-controls{justify-content:flex-start}.result dl{grid-template-columns:1fr 1fr}}
 @media(min-width:650px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tile{display:flex;flex-direction:column;align-items:flex-start}.tile button{margin-top:auto}.wrap{padding-top:24px}}
