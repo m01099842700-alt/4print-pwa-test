@@ -7,7 +7,7 @@ const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 let installPrompt = null;
 let isSubmitting = false;
 let products = [];
-let quantities = Object.create(null);
+let cart = Object.create(null);
 
 const $ = id => document.getElementById(id);
 
@@ -15,6 +15,8 @@ const installBtn = $("installBtn");
 const testStatus = $("testStatus");
 const productsStatus = $("productsStatus");
 const productsList = $("productsList");
+const materialSelect = $("materialSelect");
+const addMaterialBtn = $("addMaterialBtn");
 const connectionNotice = $("connectionNotice");
 const selectedCount = $("selectedCount");
 const orderTotal = $("orderTotal");
@@ -81,7 +83,7 @@ async function loadProducts() {
     }
     products = data.products;
     const validCodes = new Set(products.map(p => String(p.code)));
-    Object.keys(quantities).forEach(code => { if (!validCodes.has(code)) delete quantities[code]; });
+    Object.keys(cart).forEach(code => { if (!validCodes.has(code)) delete cart[code]; });
     renderProducts();
     updateSummary();
     setMessage(productsStatus, "تم تحميل " + products.length + " خامة.", "status-ok");
@@ -109,84 +111,128 @@ async function loadProducts() {
   }
 }
 
-function renderProducts() {
-  productsList.replaceChildren();
-  if (!products.length) {
-    productsList.textContent = "لا توجد خامات متاحة للعرض حاليًا.";
-    return;
-  }
-  products.forEach(product => {
-    const code = String(product.code);
-    const stock = Math.max(0, Number(product.stock) || 0);
-    const qty = Number(quantities[code]) || 0;
-
-    const card = document.createElement("div");
-    card.className = "product";
-
-    const info = document.createElement("div");
-    const name = document.createElement("h3");
-    name.textContent = String(product.name || "خامة");
-    const meta = document.createElement("div");
-    meta.className = "product-meta";
-    meta.textContent = "السعر: " + money(product.price) + " جنيه · المتاح: " + money(stock) + " " + String(product.unit || "");
-    info.append(name, meta);
-
-    const controls = document.createElement("div");
-    controls.className = "product-controls";
-    const minus = document.createElement("button");
-    minus.type = "button";
-    minus.className = "qty-btn";
-    minus.textContent = "−";
-    minus.setAttribute("aria-label", "تقليل كمية " + String(product.name || ""));
-    minus.disabled = qty <= 0;
-    minus.addEventListener("click", () => changeQuantity(code, -1));
-
-    const qtyText = document.createElement("span");
-    qtyText.className = "qty";
-    qtyText.textContent = String(qty);
-
-    const plus = document.createElement("button");
-    plus.type = "button";
-    plus.className = "qty-btn";
-    plus.textContent = "+";
-    plus.setAttribute("aria-label", "زيادة كمية " + String(product.name || ""));
-    plus.disabled = qty >= stock || stock <= 0;
-    plus.addEventListener("click", () => changeQuantity(code, 1));
-
-    controls.append(minus, qtyText, plus);
-    card.append(info, controls);
-    productsList.append(card);
-  });
+function isDimensionalProduct(product) {
+  if (product && product.requiresDimensions === true) return true;
+  const name = String(product && product.name || "");
+  const unit = String(product && product.unit || "").toLowerCase().replace(/\s/g, "");
+  return /خشب/.test(name) || ["سم2", "سم²", "cm2", "cm²", "مساحة"].includes(unit);
 }
 
-function changeQuantity(code, delta) {
-  const product = products.find(p => String(p.code) === code);
-  if (!product) return;
-  const stock = Math.max(0, Number(product.stock) || 0);
-  const next = Math.max(0, Math.min(stock, (Number(quantities[code]) || 0) + delta));
-  if (next === 0) delete quantities[code];
-  else quantities[code] = next;
-  renderProducts();
-  updateSummary();
+function renderProducts() {
+  materialSelect.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "اختر الخامة لإضافتها";
+  materialSelect.append(placeholder);
+  products.forEach(p => {
+    const code = String(p.code);
+    const inCart = cart[code];
+    const stock = Math.max(0, Number(p.stock) || 0);
+    if (!inCart && stock > 0) {
+      const option = document.createElement("option");
+      option.value = code;
+      option.textContent = String(p.name || code) + " — متاح: " + stock;
+      materialSelect.append(option);
+    }
+  });
+  addMaterialBtn.disabled = materialSelect.options.length <= 1;
+  productsList.replaceChildren();
+  const codes = Object.keys(cart);
+  if (!codes.length) {
+    productsList.textContent = "لم تتم إضافة خامات بعد. اختر خامة من القائمة أعلاه.";
+    return;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "materials-table-wrap";
+  const table = document.createElement("table");
+  table.className = "materials-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["الخامة", "الطول", "العرض", "العدد", "الإجمالي", ""].forEach((label, i) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    if ((i === 1 || i === 2) && !codes.some(c => isDimensionalProduct(cart[c].product))) th.className = "optional-dim-col";
+    headRow.append(th);
+  });
+  thead.append(headRow);
+  const tbody = document.createElement("tbody");
+
+  codes.forEach(code => {
+    const entry = cart[code], p = entry.product;
+    const dimensional = isDimensionalProduct(p);
+    const tr = document.createElement("tr");
+    const nameTd = document.createElement("td"); nameTd.textContent = p.name || code; tr.append(nameTd);
+
+    function numberCell(value, placeholderText, field, show) {
+      const td = document.createElement("td");
+      if (!show) { td.className = "optional-dim-col"; td.textContent = "—"; return td; }
+      const input = document.createElement("input");
+      input.type = "number"; input.min = "0.01"; input.step = "0.01";
+      input.inputMode = "decimal"; input.placeholder = placeholderText; input.value = value || "";
+      input.setAttribute("aria-label", p.name + " " + placeholderText);
+      input.addEventListener("input", () => { entry[field] = Number(input.value) || 0; updateSummary(); });
+      td.append(input); return td;
+    }
+    tr.append(numberCell(entry.length, "الطول", "length", dimensional));
+    tr.append(numberCell(entry.width, "العرض", "width", dimensional));
+
+    const qtyTd = document.createElement("td");
+    const qty = document.createElement("input"); qty.type = "number"; qty.min = "1"; qty.step = "1";
+    qty.max = String(Math.max(1, Number(p.stock) || 0)); qty.value = String(entry.quantity);
+    qty.inputMode = "numeric"; qty.setAttribute("aria-label", "عدد " + p.name);
+    qty.addEventListener("change", () => {
+      const max = Math.max(0, Number(p.stock) || 0);
+      const n = Math.max(1, Math.min(max, Math.floor(Number(qty.value) || 1)));
+      entry.quantity = n; qty.value = String(n); updateSummary();
+    });
+    qtyTd.append(qty); tr.append(qtyTd);
+
+    const totalTd = document.createElement("td"); totalTd.className = "line-total"; totalTd.textContent = money(lineTotal(entry)) + " جنيه"; tr.append(totalTd);
+    const removeTd = document.createElement("td");
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "remove-item"; remove.textContent = "إزالة";
+    remove.addEventListener("click", () => { delete cart[code]; renderProducts(); updateSummary(); });
+    removeTd.append(remove); tr.append(removeTd);
+    tbody.append(tr);
+  });
+  table.append(thead, tbody); wrap.append(table); productsList.append(wrap);
+}
+
+function lineTotal(entry) {
+  const p = entry.product;
+  const price = Number(p.price) || 0;
+  if (isDimensionalProduct(p)) return Math.round((Number(entry.length)||0) * (Number(entry.width)||0) * price * (Number(entry.quantity)||0) * 100) / 100;
+  return Math.round(price * (Number(entry.quantity)||0) * 100) / 100;
+}
+
+function addSelectedMaterial() {
+  const code = materialSelect.value;
+  const p = products.find(item => String(item.code) === code);
+  if (!p || cart[code]) return;
+  cart[code] = {product:p, quantity:1, length:0, width:0};
+  renderProducts(); updateSummary();
 }
 
 function selectedItems() {
-  return products.filter(p => Number(quantities[String(p.code)]) > 0).map(p => ({
-    code: String(p.code),
-    name: String(p.name || ""),
-    quantity: Number(quantities[String(p.code)]),
-    price: Number(p.price) || 0
-  }));
+  return Object.keys(cart).map(code => {
+    const e = cart[code];
+    return {code:String(code), quantity:Number(e.quantity), length:Number(e.length)||0, width:Number(e.width)||0};
+  });
 }
 
 function updateSummary() {
-  const items = selectedItems();
-  const count = items.reduce((sum, item) => sum + item.quantity, 0);
-  const total = items.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  const entries = Object.keys(cart).map(code => cart[code]);
+  const count = entries.reduce((sum, e) => sum + (Number(e.quantity)||0), 0);
+  const total = entries.reduce((sum, e) => sum + lineTotal(e), 0);
   selectedCount.textContent = String(count);
   orderTotal.textContent = money(total);
-  submitOrderBtn.disabled = isSubmitting || products.length === 0 || items.length === 0;
+  productsList.querySelectorAll(".line-total").forEach((cell, i) => {
+    const entry = entries[i]; if (entry) cell.textContent = money(lineTotal(entry)) + " جنيه";
+  });
+  submitOrderBtn.disabled = isSubmitting || products.length === 0 || entries.length === 0 || entries.some(e => isDimensionalProduct(e.product) && (!(e.length > 0) || !(e.width > 0)));
 }
+
+addMaterialBtn.addEventListener("click", addSelectedMaterial);
 
 function showNewOrder(orderId, total, message) {
   newOrderBox.classList.remove("hidden");
@@ -235,9 +281,11 @@ bookingForm.addEventListener("submit", async event => {
     return;
   }
   if (!items.length) {
-    setMessage(bookingStatus, "اختر كمية من خامة واحدة على الأقل.", "status-error");
+    setMessage(bookingStatus, "اختر خامة واحدة على الأقل.", "status-error");
     return;
   }
+  const invalidDimensions = Object.keys(cart).some(code => isDimensionalProduct(cart[code].product) && (!(cart[code].length > 0) || !(cart[code].width > 0)));
+  if (invalidDimensions) { setMessage(bookingStatus, "أدخل الطول والعرض لكل خامة خشب قبل إرسال الطلب.", "status-error"); return; }
 
   let pending;
   try { pending = JSON.parse(localStorage.getItem(PENDING_ORDER_KEY) || "null"); } catch (_) {}
@@ -263,7 +311,7 @@ bookingForm.addEventListener("submit", async event => {
       setMessage(bookingStatus, "تم إرسال الطلب بنجاح.", "status-ok");
       showNewOrder(String(orderId), total, result.message);
       bookingForm.reset();
-      quantities = Object.create(null);
+      cart = Object.create(null);
       renderProducts();
       updateSummary();
       await loadProducts();
