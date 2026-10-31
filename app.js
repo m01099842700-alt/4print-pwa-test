@@ -7,7 +7,8 @@ const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 let installPrompt = null;
 let isSubmitting = false;
 let products = [];
-let cart = Object.create(null);
+let cart = [];
+let cartSequence = 0;
 
 const $ = id => document.getElementById(id);
 
@@ -83,7 +84,7 @@ async function loadProducts() {
     }
     products = data.products;
     const validCodes = new Set(products.map(p => String(p.code)));
-    Object.keys(cart).forEach(code => { if (!validCodes.has(code)) delete cart[code]; });
+    cart = cart.filter(entry => validCodes.has(String(entry.product.code)));
     renderProducts();
     updateSummary();
     setMessage(productsStatus, "تم تحميل " + products.length + " خامة.", "status-ok");
@@ -112,90 +113,45 @@ async function loadProducts() {
 }
 
 function isDimensionalProduct(product) {
-  if (product && product.requiresDimensions === true) return true;
-  const name = String(product && product.name || "");
-  const unit = String(product && product.unit || "").toLowerCase().replace(/\s/g, "");
-  return /خشب/.test(name) || ["سم2", "سم²", "cm2", "cm²", "مساحة"].includes(unit);
+  if (!product) return false;
+  if (String(product.pricingType || "").trim() === "مساحة") return true;
+  if (product.pricingType && String(product.pricingType).trim() !== "مساحة") return false;
+  if (product.requiresDimensions === true) return true;
+  return String(product.code || "") === "W1000";
 }
 
 function renderProducts() {
   materialSelect.replaceChildren();
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = "اختر الخامة لإضافتها";
-  materialSelect.append(placeholder);
-  products.forEach(p => {
-    const code = String(p.code);
-    const inCart = cart[code];
-    const stock = Math.max(0, Number(p.stock) || 0);
-    if (!inCart && stock > 0) {
-      const option = document.createElement("option");
-      option.value = code;
-      option.textContent = String(p.name || code) + " — متاح: " + stock;
+  const placeholder=document.createElement("option"); placeholder.value=""; placeholder.textContent="اختر الخامة لإضافتها"; materialSelect.append(placeholder);
+  products.forEach(p=>{
+    const code=String(p.code), dimensional=isDimensionalProduct(p), exists=cart.some(e=>String(e.product.code)===code);
+    const stock=Math.max(0,Number(p.stock)||0);
+    if(stock>0 && (dimensional || !exists)){
+      const option=document.createElement("option"); option.value=code;
+      option.textContent=String(p.name||code)+" — متاح: "+(dimensional?money(stock)+" م²":money(stock)+" "+(p.unit||""));
       materialSelect.append(option);
     }
   });
-  addMaterialBtn.disabled = materialSelect.options.length <= 1;
+  addMaterialBtn.disabled=materialSelect.options.length<=1;
   productsList.replaceChildren();
-  const codes = Object.keys(cart);
-  if (!codes.length) {
-    productsList.textContent = "لم تتم إضافة خامات بعد. اختر خامة من القائمة أعلاه.";
-    return;
-  }
-
-  const wrap = document.createElement("div");
-  wrap.className = "materials-table-wrap";
-  const table = document.createElement("table");
-  table.className = "materials-table";
-  const thead = document.createElement("thead");
-  const headRow = document.createElement("tr");
-  ["الخامة", "الطول", "العرض", "العدد", "الإجمالي", ""].forEach((label, i) => {
-    const th = document.createElement("th");
-    th.textContent = label;
-    if ((i === 1 || i === 2) && !codes.some(c => isDimensionalProduct(cart[c].product))) th.className = "optional-dim-col";
-    headRow.append(th);
+  if(!cart.length){productsList.textContent="لم تتم إضافة خامات بعد. اختر خامة من القائمة أعلاه.";return;}
+  const wrap=document.createElement("div");wrap.className="materials-table-wrap";
+  const table=document.createElement("table");table.className="materials-table";
+  const thead=document.createElement("thead"),hr=document.createElement("tr");
+  ["الخامة","الطول (سم)","العرض (سم)","العدد","الإجمالي",""] .forEach((label,i)=>{const th=document.createElement("th");th.textContent=label;if((i===1||i===2)&&!cart.some(e=>isDimensionalProduct(e.product)))th.className="optional-dim-col";hr.append(th);});
+  thead.append(hr);const tbody=document.createElement("tbody");
+  cart.forEach(entry=>{
+    const p=entry.product,dim=isDimensionalProduct(p),tr=document.createElement("tr");
+    const name=document.createElement("td");name.textContent=p.name||p.code;tr.append(name);
+    function dimCell(value,placeholder,field){const td=document.createElement("td");if(!dim){td.className="optional-dim-col";td.textContent="—";return td;}const input=document.createElement("input");input.type="number";input.min="0.01";input.step="0.01";input.inputMode="decimal";input.placeholder=placeholder;input.value=value||"";input.addEventListener("input",()=>{entry[field]=Number(input.value)||0;updateSummary();});td.append(input);return td;}
+    tr.append(dimCell(entry.length,"الطول","length"),dimCell(entry.width,"العرض","width"));
+    const qtyTd=document.createElement("td"),qty=document.createElement("input");qty.type="number";qty.min="1";qty.step="1";qty.inputMode="numeric";
+    if(!dim)qty.max=String(Math.max(1,Number(p.stock)||0));qty.value=String(entry.quantity);
+    qty.addEventListener("change",()=>{const max=dim?100000:Math.max(1,Number(p.stock)||1);const n=Math.max(1,Math.min(max,Math.floor(Number(qty.value)||1)));entry.quantity=n;qty.value=String(n);updateSummary();});qtyTd.append(qty);tr.append(qtyTd);
+    const total=document.createElement("td");total.className="line-total";total.textContent=money(lineTotal(entry))+" جنيه";tr.append(total);
+    const removeTd=document.createElement("td"),remove=document.createElement("button");remove.type="button";remove.className="remove-item";remove.textContent="إزالة";remove.addEventListener("click",()=>{cart=cart.filter(x=>x.id!==entry.id);renderProducts();updateSummary();});removeTd.append(remove);tr.append(removeTd);tbody.append(tr);
   });
-  thead.append(headRow);
-  const tbody = document.createElement("tbody");
-
-  codes.forEach(code => {
-    const entry = cart[code], p = entry.product;
-    const dimensional = isDimensionalProduct(p);
-    const tr = document.createElement("tr");
-    const nameTd = document.createElement("td"); nameTd.textContent = p.name || code; tr.append(nameTd);
-
-    function numberCell(value, placeholderText, field, show) {
-      const td = document.createElement("td");
-      if (!show) { td.className = "optional-dim-col"; td.textContent = "—"; return td; }
-      const input = document.createElement("input");
-      input.type = "number"; input.min = "0.01"; input.step = "0.01";
-      input.inputMode = "decimal"; input.placeholder = placeholderText; input.value = value || "";
-      input.setAttribute("aria-label", p.name + " " + placeholderText);
-      input.addEventListener("input", () => { entry[field] = Number(input.value) || 0; updateSummary(); });
-      td.append(input); return td;
-    }
-    tr.append(numberCell(entry.length, "الطول", "length", dimensional));
-    tr.append(numberCell(entry.width, "العرض", "width", dimensional));
-
-    const qtyTd = document.createElement("td");
-    const qty = document.createElement("input"); qty.type = "number"; qty.min = "1"; qty.step = "1";
-    qty.max = String(Math.max(1, Number(p.stock) || 0)); qty.value = String(entry.quantity);
-    qty.inputMode = "numeric"; qty.setAttribute("aria-label", "عدد " + p.name);
-    qty.addEventListener("change", () => {
-      const max = Math.max(0, Number(p.stock) || 0);
-      const n = Math.max(1, Math.min(max, Math.floor(Number(qty.value) || 1)));
-      entry.quantity = n; qty.value = String(n); updateSummary();
-    });
-    qtyTd.append(qty); tr.append(qtyTd);
-
-    const totalTd = document.createElement("td"); totalTd.className = "line-total"; totalTd.textContent = money(lineTotal(entry)) + " جنيه"; tr.append(totalTd);
-    const removeTd = document.createElement("td");
-    const remove = document.createElement("button"); remove.type = "button"; remove.className = "remove-item"; remove.textContent = "إزالة";
-    remove.addEventListener("click", () => { delete cart[code]; renderProducts(); updateSummary(); });
-    removeTd.append(remove); tr.append(removeTd);
-    tbody.append(tr);
-  });
-  table.append(thead, tbody); wrap.append(table); productsList.append(wrap);
+  table.append(thead,tbody);wrap.append(table);productsList.append(wrap);
 }
 
 function lineTotal(entry) {
@@ -206,30 +162,18 @@ function lineTotal(entry) {
 }
 
 function addSelectedMaterial() {
-  const code = materialSelect.value;
-  const p = products.find(item => String(item.code) === code);
-  if (!p || cart[code]) return;
-  cart[code] = {product:p, quantity:1, length:0, width:0};
-  renderProducts(); updateSummary();
+  const code=materialSelect.value, p=products.find(x=>String(x.code)===code);if(!p)return;
+  const dimensional=isDimensionalProduct(p);
+  if(!dimensional && cart.some(e=>String(e.product.code)===code))return;
+  cart.push({id:++cartSequence,product:p,quantity:1,length:0,width:0});
+  renderProducts();updateSummary();
 }
-
-function selectedItems() {
-  return Object.keys(cart).map(code => {
-    const e = cart[code];
-    return {code:String(code), quantity:Number(e.quantity), length:Number(e.length)||0, width:Number(e.width)||0};
-  });
-}
-
-function updateSummary() {
-  const entries = Object.keys(cart).map(code => cart[code]);
-  const count = entries.reduce((sum, e) => sum + (Number(e.quantity)||0), 0);
-  const total = entries.reduce((sum, e) => sum + lineTotal(e), 0);
-  selectedCount.textContent = String(count);
-  orderTotal.textContent = money(total);
-  productsList.querySelectorAll(".line-total").forEach((cell, i) => {
-    const entry = entries[i]; if (entry) cell.textContent = money(lineTotal(entry)) + " جنيه";
-  });
-  submitOrderBtn.disabled = isSubmitting || products.length === 0 || entries.length === 0 || entries.some(e => isDimensionalProduct(e.product) && (!(e.length > 0) || !(e.width > 0)));
+function selectedItems(){return cart.map(e=>({code:String(e.product.code),quantity:Number(e.quantity),length:Number(e.length)||0,width:Number(e.width)||0}));}
+function updateSummary(){
+  const count=cart.reduce((s,e)=>s+(Number(e.quantity)||0),0),total=cart.reduce((s,e)=>s+lineTotal(e),0);
+  selectedCount.textContent=String(count);orderTotal.textContent=money(total);
+  productsList.querySelectorAll(".line-total").forEach((cell,i)=>{if(cart[i])cell.textContent=money(lineTotal(cart[i]))+" جنيه";});
+  submitOrderBtn.disabled=isSubmitting||products.length===0||cart.length===0||cart.some(e=>isDimensionalProduct(e.product)&&(!(e.length>0)||!(e.width>0)));
 }
 
 addMaterialBtn.addEventListener("click", addSelectedMaterial);
@@ -284,16 +228,18 @@ bookingForm.addEventListener("submit", async event => {
     setMessage(bookingStatus, "اختر خامة واحدة على الأقل.", "status-error");
     return;
   }
-  const invalidDimensions = Object.keys(cart).some(code => isDimensionalProduct(cart[code].product) && (!(cart[code].length > 0) || !(cart[code].width > 0)));
+  const invalidDimensions = cart.some(entry => isDimensionalProduct(entry.product) && (!(entry.length > 0) || !(entry.width > 0)));
   if (invalidDimensions) { setMessage(bookingStatus, "أدخل الطول والعرض لكل خامة خشب قبل إرسال الطلب.", "status-error"); return; }
 
   let pending;
   try { pending = JSON.parse(localStorage.getItem(PENDING_ORDER_KEY) || "null"); } catch (_) {}
   if (pending && pending.idempotencyKey) {
-    setMessage(bookingStatus, "يوجد إرسال سابق لم يُحسم بعد. سنعيد إرسال نفس الطلب للتحقق من نتيجته بدل إنشاء محاولة جديدة.", "status-warn");
-    pending.name = name;
-    pending.phone = phone;
-    pending.items = items;
+    const samePayload = pending.name === name && pending.phone === phone && JSON.stringify(pending.items) === JSON.stringify(items);
+    if (!samePayload) {
+      setMessage(bookingStatus, "يوجد طلب سابق لم تُحسم نتيجته. لن نغيّر بياناته أو نعيد استخدام مفتاحه. استعلم عن الطلب السابق أولًا أو تواصل مع أمين المكتبة.", "status-warn");
+      return;
+    }
+    setMessage(bookingStatus, "نعيد التحقق من نتيجة الإرسال السابق بنفس البيانات.", "status-warn");
   } else {
     pending = {name, phone, items, idempotencyKey: makeIdempotencyKey(), createdAt: Date.now()};
   }
@@ -311,7 +257,7 @@ bookingForm.addEventListener("submit", async event => {
       setMessage(bookingStatus, "تم إرسال الطلب بنجاح.", "status-ok");
       showNewOrder(String(orderId), total, result.message);
       bookingForm.reset();
-      cart = Object.create(null);
+      cart = [];
       renderProducts();
       updateSummary();
       await loadProducts();
