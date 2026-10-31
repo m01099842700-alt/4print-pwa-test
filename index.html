@@ -33,6 +33,14 @@
   <section class="card" id="materialsSection">
     <h2>الخامات المتاحة</h2>
     <p id="productsStatus" role="status">جارٍ تحميل الخامات...</p>
+    <div class="material-picker">
+      <label for="materialSelect">اختر الخامة</label>
+      <div class="material-picker-row">
+        <select id="materialSelect"><option value="">جارٍ تحميل الخامات...</option></select>
+        <button id="addMaterialBtn" class="primary add-material" type="button" disabled>إضافة الخامة</button>
+      </div>
+      <p class="sub-note">السعر لا يظهر للطالب، ويتم حساب الإجمالي تلقائيًا وفق نوع الخامة.</p>
+    </div>
     <div id="productsList"></div>
   </section>
 
